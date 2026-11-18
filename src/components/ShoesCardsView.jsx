@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 
 export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
   const [isAdding, setIsAdding] = useState(false);
-  const [editingId, setEditingId] = useState(null); // ID моделі, яку зараз редагуємо
+  const [editingId, setEditingId] = useState(null);
 
   const [formData, setFormData] = useState({
     id: '',
     name: '',
     defaultCostUSD: '',
     retailPriceUSD: '',
-    photo: ''
+    photo: '' // Тут буде зберігатися картинка у форматі Base64 або посилання
   });
 
   const handleOpenAdd = () => {
@@ -30,6 +30,18 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     setIsAdding(true);
   };
 
+  // Функція для перетворення завантаженого файлу у Base64
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setFormData(prev => ({ ...prev, photo: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveShoe = (e) => {
     e.preventDefault();
     if (!formData.name || !formData.id) return;
@@ -38,7 +50,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     const retailUSD = Number(formData.retailPriceUSD) || 0;
 
     if (editingId) {
-      // Редагування існуючої моделі
       setShoes(shoes.map(shoe => shoe.id === editingId ? {
         ...shoe,
         name: formData.name,
@@ -47,7 +58,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
         photo: formData.photo
       } : shoe));
     } else {
-      // Додавання нової моделі
       if (shoes.some(s => s.id === formData.id)) {
         alert('Модель з таким артикулом вже існує!');
         return;
@@ -94,7 +104,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
         </button>
       </div>
 
-      {/* Форма додавання або редагування */}
+      {/* Форма додавання або редагування з завантаженням фото */}
       {isAdding && (
         <form onSubmit={handleSaveShoe} className="card" style={{ padding: '1.5rem', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: '1rem', border: '2px dashed #4f46e5' }}>
           <h3 style={{ fontSize: '1.125rem', fontWeight: '800', color: '#111827', margin: 0 }}>
@@ -110,7 +120,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
                 value={formData.id} 
                 onChange={(e) => setFormData({...formData, id: e.target.value})}
                 className="input-field"
-                disabled={editingId !== null} // Артикул не можна міняти при редагуванні
+                disabled={editingId !== null}
                 required
               />
             </div>
@@ -154,15 +164,25 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             </div>
           </div>
 
-          <div>
-            <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Посилання на фото</label>
-            <input 
-              type="text" 
-              placeholder="https://..." 
-              value={formData.photo} 
-              onChange={(e) => setFormData({...formData, photo: e.target.value})}
-              className="input-field"
-            />
+          {/* Завантаження файлу замість посилання */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block' }}>Фото моделі з комп'ютера</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <input 
+                type="file" 
+                accept="image/*"
+                onChange={handleImageUpload}
+                style={{ fontSize: '0.85rem', color: '#374151' }}
+              />
+              {formData.photo && (
+                <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold' }}>✅ Фото завантажено</span>
+              )}
+            </div>
+            {formData.photo && (
+              <div style={{ width: '80px', height: '80px', borderRadius: '0.5rem', overflow: 'hidden', border: '1px solid #d1d5db', marginTop: '0.25rem' }}>
+                <img src={formData.photo} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
@@ -194,7 +214,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
           return (
             <div key={shoe.id} className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
               
-              {/* Кнопки видалення та редагування на картці */}
               <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '6px', zIndex: 2 }}>
                 <button 
                   onClick={() => handleOpenEdit(shoe)}
