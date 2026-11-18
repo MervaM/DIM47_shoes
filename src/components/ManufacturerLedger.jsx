@@ -28,7 +28,7 @@ export default function ManufacturerLedger({
       patternCostUAH: 0,
       rowRate: exchangeRate || 45.0, 
       isPaid: false, 
-      paidAt: '', // Час або дата відмітки оплати
+      paidAt: '', 
       photo: ''           
     }]);
   };
@@ -56,7 +56,6 @@ export default function ManufacturerLedger({
           }
         }
 
-        // Якщо натиснули "Оплачено" — фіксуємо дату/час чеку
         if (field === 'isPaid') {
           updated.paidAt = value 
             ? new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' }) 
@@ -91,7 +90,8 @@ export default function ManufacturerLedger({
 
   let totalPairs = 0;
   let totalUSD = 0;
-  let totalUAH = 0;
+  let shoesOnlyUAH = 0;  // Чиста сума за взуття по курсу
+  let totalPatternsUAH = 0; // Сума за лекала
   let paidPairs = 0;
   let paidUAH = 0;    
   let unpaidUAH = 0;  
@@ -107,33 +107,36 @@ export default function ManufacturerLedger({
       const isPaid = row.isPaid || false;
 
       totalPairs += qty;
-      const uah = (qty * costUSD * rRate) + patternUAH;
+      const shoePartUAH = qty * costUSD * rRate;
+      const rowFullUAH = shoePartUAH + patternUAH;
+
       totalUSD += qty * costUSD;
-      totalUAH += uah;
+      shoesOnlyUAH += shoePartUAH;
+      totalPatternsUAH += patternUAH;
 
       if (isPaid) {
         paidPairs += qty;
-        paidUAH += uah;
+        paidUAH += rowFullUAH;
         const shoeInfo = shoesCatalog.find(s => s.id === row.shoeId);
         paidItemsList.push({
           ...row,
           shoeName: shoeInfo ? shoeInfo.name : 'Без назви',
           shoeArticle: shoeInfo?.id || '',
-          calculatedUAH: uah,
+          shoePartUAH,
+          calculatedUAH: rowFullUAH,
           calculatedUSD: qty * costUSD
         });
       } else {
-        unpaidUAH += uah;
+        unpaidUAH += rowFullUAH;
       }
     } else if (row.type === 'subtotal') {
       const subVal = Number(row.manualSumUAH) || 0;
-      totalUAH += subVal;
       unpaidUAH += subVal;
     }
   });
 
+  const totalUAH = shoesOnlyUAH + totalPatternsUAH;
   const effectiveDeposit = (Number(deposit) || 0) - (Number(initialDebt) || 0);
-  // Залишок авансу рахуємо від усіх замовлень або від оплачених (загальний баланс)
   const remainingBalance = paymentMode === 'prepaid' ? effectiveDeposit - paidUAH : unpaidUAH;
 
   return (
@@ -249,7 +252,7 @@ export default function ManufacturerLedger({
                 <th style={{ width: '90px', textAlign: 'right' }}>Ціна ($)</th>
                 <th style={{ width: '90px', textAlign: 'right' }}>Лекало (грн)</th>
                 <th style={{ width: '90px', textAlign: 'right' }}>Курс</th>
-                <th style={{ width: '120px', textAlign: 'right' }}>Сума (грн)</th>
+                <th style={{ width: '140px', textAlign: 'right' }}>Сума (грн)</th>
                 <th style={{ width: '40px', textAlign: 'center' }}></th>
               </tr>
             </thead>
@@ -308,8 +311,9 @@ export default function ManufacturerLedger({
                 const rRate = Number(row.rowRate) || 0;
                 const isPaid = row.isPaid || false;
 
-                const rowTotalUSD = qty * costUSD;
-                const rowTotalUAH = (rowTotalUSD * rRate) + patternUAH;
+                const rowUSD = qty * costUSD;
+                const shoePartUAH = rowUSD * rRate;
+                const rowTotalUAH = shoePartUAH + patternUAH;
 
                 return (
                   <tr 
@@ -431,11 +435,19 @@ export default function ManufacturerLedger({
                       />
                     </td>
 
+                    {/* РОЗПИС СУМИ: Взуття по курсу + Лекало окремо */}
                     <td style={{ textAlign: 'right', fontWeight: '700' }}>
-                      <span style={{ color: isPaid ? '#16a34a' : '#4f46e5', fontWeight: '800' }}>
-                        {rowTotalUAH.toFixed(0)} грн {isPaid && '✓'}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#9ca3af', display: 'block' }}>(${rowTotalUSD.toFixed(2)})</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <span style={{ color: isPaid ? '#16a34a' : '#4f46e5', fontWeight: '800' }}>
+                          {shoePartUAH.toFixed(0)} грн {isPaid && '✓'}
+                        </span>
+                        {patternUAH > 0 && (
+                          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#d97706' }}>
+                            + {patternUAH} лекало
+                          </span>
+                        )}
+                        <span style={{ fontSize: '0.7rem', fontWeight: 'normal', color: '#9ca3af' }}>(${rowUSD.toFixed(2)})</span>
+                      </div>
                     </td>
 
                     <td style={{ textAlign: 'center' }}>
@@ -448,7 +460,7 @@ export default function ManufacturerLedger({
           </table>
         </div>
 
-        {/* НИЖНЯ ПАНЕЛЬ */}
+        {/* НИЖНЯ ПАНЕЛЬ З РОЗПОДІЛОМ ПОКАЗНИКІВ */}
         <div style={{ padding: '1.25rem 1.5rem', background: '#f9fafb', borderTop: '1px solid #e5e7eb', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <button onClick={handleAddRow} className="btn-primary">
@@ -459,16 +471,18 @@ export default function ManufacturerLedger({
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', fontSize: '0.875rem', background: '#ffffff', padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', fontSize: '0.85rem', background: '#ffffff', padding: '0.75rem 1.25rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' }}>
             <div>Всього пар: <span style={{ fontWeight: '800', color: '#111827' }}>{totalPairs}</span></div>
-            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '1rem' }}>Не оплачено: <span style={{ fontWeight: '800', color: '#dc2626' }}>{unpaidUAH.toFixed(0)} грн</span></div>
-            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '1rem', fontSize: '1rem' }}>Загалом за місяць: <span style={{ fontWeight: '900', color: '#4f46e5' }}>{totalUAH.toFixed(0)} грн</span></div>
+            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '0.75rem' }}>Сума в $: <span style={{ fontWeight: '800', color: '#111827' }}>${totalUSD.toFixed(2)}</span></div>
+            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '0.75rem' }}>Сума в грн: <span style={{ fontWeight: '800', color: '#4f46e5' }}>{shoesOnlyUAH.toFixed(0)} грн</span></div>
+            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '0.75rem' }}>Лекала: <span style={{ fontWeight: '800', color: '#d97706' }}>{totalPatternsUAH.toFixed(0)} грн</span></div>
+            <div style={{ borderLeft: '1px solid #e5e7eb', paddingLeft: '0.75rem', fontSize: '0.95rem' }}>Всього: <span style={{ fontWeight: '900', color: '#111827' }}>{totalUAH.toFixed(0)} грн</span></div>
           </div>
         </div>
 
       </div>
 
-      {/* НИЖНІЙ ЧЕК / РЕЄСТР ОПЛАЧЕНИХ ПАРТІЙ (XL-СПИСОК) */}
+      {/* НИЖНІЙ ЧЕК / РЕЄСТР ОПЛАЧЕНИХ ПАРТІЙ */}
       <div className="card" style={{ border: '2px solid #86efac', background: '#f0fdf4' }}>
         <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
@@ -517,7 +531,7 @@ export default function ManufacturerLedger({
                       {item.quantity} шт.
                     </td>
                     <td style={{ padding: '0.65rem 1rem', textAlign: 'right', color: '#4b5563' }}>
-                      ${item.customCostUSD} × {item.rowRate}
+                      ${item.customCostUSD} × {item.rowRate} = {item.shoePartUAH.toFixed(0)} грн
                     </td>
                     <td style={{ padding: '0.65rem 1rem', textAlign: 'right', color: '#d97706', fontWeight: '600' }}>
                       {item.patternCostUAH > 0 ? `+${item.patternCostUAH} грн` : '—'}
