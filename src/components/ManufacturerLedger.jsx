@@ -26,7 +26,8 @@ export default function ManufacturerLedger({
       quantity: 1, 
       customCostUSD: '',  
       patternCostUAH: 0,
-      rowRate: exchangeRate || 45.0, // Індивідуальний курс для рядка за замовчуванням з шапки
+      rowRate: exchangeRate || 45.0, 
+      isPaid: false, // Статус оплати за замовчуванням
       photo: ''           
     }]);
   };
@@ -145,6 +146,7 @@ export default function ManufacturerLedger({
             <thead>
               <tr>
                 <th style={{ width: '40px', textAlign: 'center' }}>№</th>
+                <th style={{ width: '50px', textAlign: 'center' }} title="Статус оплати">✓</th>
                 <th style={{ width: '90px' }}>Дата</th>
                 <th>Фото + Назва пари</th>
                 <th style={{ width: '65px', textAlign: 'center' }}>К-ть</th>
@@ -162,7 +164,7 @@ export default function ManufacturerLedger({
 
                   return (
                     <tr key={row.id} style={{ background: '#fffbeb', borderTop: '2px solid #fde68a', borderBottom: '2px solid #fde68a' }}>
-                      <td colSpan="7" style={{ padding: '0.75rem 1rem' }}>
+                      <td colSpan="8" style={{ padding: '0.75rem 1rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                           <button 
                             onClick={() => handleRowChange(row.id, 'isCollapsed', !isCollapsed)}
@@ -208,14 +210,34 @@ export default function ManufacturerLedger({
                 const costUSD = Number(row.customCostUSD) || 0;
                 const patternUAH = Number(row.patternCostUAH) || 0;
                 const rRate = Number(row.rowRate) || 0;
+                const isPaid = row.isPaid || false;
 
                 const rowTotalUSD = qty * costUSD;
                 const rowTotalUAH = (rowTotalUSD * rRate) + patternUAH;
 
                 return (
-                  <tr key={row.id}>
+                  <tr 
+                    key={row.id} 
+                    style={{ 
+                      // Якщо оплачено — рядок стає темно-сірим/приглушеним
+                      background: isPaid ? '#f3f4f6' : 'transparent', 
+                      color: isPaid ? '#4b5563' : 'inherit',
+                      transition: 'background 0.2s'
+                    }}
+                  >
                     <td style={{ textAlign: 'center', fontWeight: '600', color: '#9ca3af' }}>{index + 1}</td>
                     
+                    {/* Чекбокс оплати */}
+                    <td style={{ textAlign: 'center' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={isPaid}
+                        onChange={(e) => handleRowChange(row.id, 'isPaid', e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: '#16a34a', cursor: 'pointer' }}
+                        title="Позначити як оплачено"
+                      />
+                    </td>
+
                     <td>
                       <input 
                         type="text" 
@@ -223,11 +245,12 @@ export default function ManufacturerLedger({
                         placeholder="ДД.ММ" 
                         onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
                         className="input-field"
+                        style={{ opacity: isPaid ? 0.7 : 1 }}
                       />
                     </td>
 
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', opacity: isPaid ? 0.7 : 1 }}>
                         <div style={{ position: 'relative', width: '40px', height: '40px', flexShrink: '0' }}>
                           {row.photo ? (
                             <img src={row.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb' }} />
@@ -268,7 +291,7 @@ export default function ManufacturerLedger({
                         value={row.quantity} 
                         onChange={(e) => handleRowChange(row.id, 'quantity', Number(e.target.value))}
                         className="input-field"
-                        style={{ textAlign: 'center', fontWeight: 'bold', color: '#4f46e5' }}
+                        style={{ textAlign: 'center', fontWeight: 'bold', color: isPaid ? '#4b5563' : '#4f46e5' }}
                       />
                     </td>
 
@@ -295,7 +318,6 @@ export default function ManufacturerLedger({
                       />
                     </td>
 
-                    {/* Індивідуальний курс для кожного рядка */}
                     <td style={{ textAlign: 'right' }}>
                       <input 
                         type="number" 
@@ -307,8 +329,11 @@ export default function ManufacturerLedger({
                       />
                     </td>
 
-                    <td style={{ textAlign: 'right', fontWeight: '700', color: '#111827' }}>
-                      <span style={{ color: '#4f46e5', fontWeight: '800' }}>{rowTotalUAH.toFixed(0)} грн</span>
+                    {/* Сума: якщо оплачено — зелена, інакше стандартна */}
+                    <td style={{ textAlign: 'right', fontWeight: '700' }}>
+                      <span style={{ color: isPaid ? '#16a34a' : '#4f46e5', fontWeight: '800' }}>
+                        {rowTotalUAH.toFixed(0)} грн {isPaid && '✓'}
+                      </span>
                       <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#9ca3af', display: 'block' }}>(${rowTotalUSD.toFixed(2)})</span>
                     </td>
 
