@@ -1,5 +1,21 @@
 import React, { useState, useRef } from 'react';
 
+function formatShortDate(isoDate) {
+  if (!isoDate || typeof isoDate !== 'string') return '';
+  const parts = isoDate.split('-'); // очікуємо YYYY-MM-DD
+  if (parts.length === 3) {
+    return `${parts[2]}.${parts[1]}`;
+  }
+  return isoDate;
+}
+
+function getMonthFromDate(isoDate, fallbackMonth) {
+  if (isoDate && typeof isoDate === 'string' && isoDate.length >= 7) {
+    return isoDate.slice(0, 7); // YYYY-MM
+  }
+  return fallbackMonth;
+}
+
 export default function ManufacturerLedger({
   manufacturerName,
   paymentMode = 'prepaid',
@@ -13,12 +29,14 @@ export default function ManufacturerLedger({
   setInitialDebt,
   shoesCatalog = []
 }) {
-  const defaultMonth = new Date().toISOString().slice(0, 7);
+  const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const defaultMonth = todayISO.slice(0, 7); // YYYY-MM
+
   const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
   const [newMonthInput, setNewMonthInput] = useState('');
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  const [newDepositDate, setNewDepositDate] = useState('');
+  const [newDepositDate, setNewDepositDate] = useState(todayISO);
   const [newDepositAmount, setNewDepositAmount] = useState('');
   const rowRefs = useRef({});
 
@@ -30,8 +48,8 @@ export default function ManufacturerLedger({
     new Set([
       defaultMonth,
       selectedMonth,
-      ...rows.map((r) => r.month || defaultMonth),
-      ...depositsList.map((d) => d.month || defaultMonth)
+      ...rows.map((r) => r.month || getMonthFromDate(r.isoDate, defaultMonth)),
+      ...depositsList.map((d) => d.month || getMonthFromDate(d.isoDate, defaultMonth))
     ])
   ).sort();
 
@@ -42,17 +60,27 @@ export default function ManufacturerLedger({
     setNewMonthInput('');
   };
 
-  const monthRows = rows.filter((r) => (r.month || defaultMonth) === selectedMonth);
-  const monthDeposits = depositsList.filter((d) => (d.month || defaultMonth) === selectedMonth);
+  // Фільтруємо рядки за місяцем (з урахуванням isoDate, якщо month ще не був проставлений)
+  const monthRows = rows.filter((r) => {
+    const rowMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
+    return rowMonth === selectedMonth;
+  });
+
+  const monthDeposits = depositsList.filter((d) => {
+    const depMonth = d.month || getMonthFromDate(d.isoDate, defaultMonth);
+    return depMonth === selectedMonth;
+  });
 
   const handleAddRow = () => {
+    const initialDate = `${selectedMonth}-01`;
     setRows([
       ...rows,
       {
         id: Date.now(),
+        isoDate: initialDate,
         month: selectedMonth,
+        date: formatShortDate(initialDate),
         type: 'item',
-        date: '',
         shoeId: '',
         quantity: 1,
         customCostUSD: '',
@@ -71,6 +99,7 @@ export default function ManufacturerLedger({
       ...rows,
       {
         id: Date.now(),
+        isoDate: `${selectedMonth}-01`,
         month: selectedMonth,
         type: 'subtotal',
         note: '',
@@ -82,17 +111,20 @@ export default function ManufacturerLedger({
 
   const handleAddDeposit = () => {
     if (!newDepositAmount) return;
+    const chosenDate = newDepositDate || `${selectedMonth}-01`;
+    const depMonth = getMonthFromDate(chosenDate, selectedMonth);
     const item = {
       id: Date.now(),
-      month: selectedMonth,
-      date:
-        newDepositDate ||
-        new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' }),
+      isoDate: chosenDate,
+      month: depMonth,
+      date: formatShortDate(chosenDate),
       amount: Number(newDepositAmount) || 0
     };
     setDepositsList([...depositsList, item]);
+    if (depMonth !== selectedMonth) {
+      setSelectedMonth(depMonth);
+    }
     setNewDepositAmount('');
-    setNewDepositDate('');
   };
 
   const handleDeleteDeposit = (id) => {
@@ -104,6 +136,15 @@ export default function ManufacturerLedger({
       rows.map((row) => {
         if (row.id === id) {
           const updated = { ...row, [field]: value };
+
+          if (field === 'isoDate') {
+            updated.date = formatShortDate(value);
+            const nextMonth = getMonthFromDate(value, selectedMonth);
+            updated.month = nextMonth;
+            if (nextMonth !== selectedMonth) {
+              setSelectedMonth(nextMonth);
+            }
+          }
 
           if (field === 'shoeId' && value) {
             const found = shoesCatalog.find((s) => s.id === value);
@@ -171,13 +212,10 @@ export default function ManufacturerLedger({
   let paidUAH = 0;
   let unpaidUAH = 0;
 
-  // Групуємо оплачені замовлення за датами в єдині чеки
   const paidGroupsMap = {};
-  let itemCounter = 0;
 
   monthRows.forEach((row) => {
     if (row.type === 'item') {
-      itemCounter += 1;
       const qty = Number(row.quantity) || 0;
       const costUSD = Number(row.customCostUSD) || 0;
       const patternUAH = Number(row.patternCostUAH) || 0;
@@ -197,16 +235,16 @@ export default function ManufacturerLedger({
         paidPairs += qty;
         paidUAH += rowFullUAH;
 
-        const dateKey = row.date ? row.date.trim() : 'Без дати';
-        if (!paidGroupsMap[dateKey]) {
-          paidGroupsMap[dateKey] = {
-            date: dateKey,
+        const labelDate = row.isoDate ? formatShortDate(row.isoDate) : row.date || 'Без дати';
+        if (!paidGroupsMap[labelDate]) {
+          paidGroupsMap[labelDate] = {
+            date: labelDate,
             totalSum: 0,
             rowIds: []
           };
         }
-        paidGroupsMap[dateKey].totalSum += rowFullUAH;
-        paidGroupsMap[dateKey].rowIds.push(row.id);
+        paidGroupsMap[labelDate].totalSum += rowFullUAH;
+        paidGroupsMap[labelDate].rowIds.push(row.id);
       } else {
         unpaidUAH += rowFullUAH;
       }
@@ -217,7 +255,6 @@ export default function ManufacturerLedger({
   });
 
   const paidChecksList = Object.values(paidGroupsMap);
-
   const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
   const totalUAH = shoesOnlyUAH + totalPatternsUAH;
   const remainingBalance =
@@ -236,7 +273,7 @@ export default function ManufacturerLedger({
     });
     setRows(
       rows.map((r) => {
-        const rMonth = r.month || defaultMonth;
+        const rMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
         if (rMonth === selectedMonth && r.type === 'item' && !r.isPaid) {
           return { ...r, isPaid: true, paidAt: nowStr, isEditing: false };
         }
@@ -396,7 +433,6 @@ export default function ManufacturerLedger({
 
       {/* ОСНОВНА КАРТКА ОБЛІКУ */}
       <div className="card" style={{ padding: '1rem' }}>
-        {/* ШАПКА З МІСЯЦЯМИ, АВАНСАМИ ТА ПІДСУМКАМИ */}
         <div className="header-box" style={{ padding: '0 0 1rem 0' }}>
           <div
             style={{
@@ -446,13 +482,11 @@ export default function ManufacturerLedger({
               </select>
 
               <input
-                type="text"
-                placeholder="РРРР-ММ"
+                type="month"
                 value={newMonthInput}
                 onChange={(e) => setNewMonthInput(e.target.value)}
                 style={{
-                  width: '85px',
-                  padding: '0.3rem 0.45rem',
+                  padding: '0.25rem 0.4rem',
                   fontSize: '0.75rem',
                   border: '1px solid #d1d5db',
                   borderRadius: '0.4rem'
@@ -519,17 +553,14 @@ export default function ManufacturerLedger({
 
                 <div style={{ display: 'flex', gap: '0.3rem' }}>
                   <input
-                    type="text"
-                    placeholder="ДД.ММ"
+                    type="date"
                     value={newDepositDate}
                     onChange={(e) => setNewDepositDate(e.target.value)}
                     style={{
-                      width: '65px',
                       padding: '0.2rem 0.3rem',
                       fontSize: '0.75rem',
                       border: '1px solid #d1d5db',
-                      borderRadius: '0.3rem',
-                      textAlign: 'center'
+                      borderRadius: '0.3rem'
                     }}
                   />
                   <input
@@ -589,7 +620,8 @@ export default function ManufacturerLedger({
                         }}
                       >
                         <span>
-                          📅 {dep.date}: <strong>{dep.amount} грн</strong>
+                          📅 {dep.isoDate ? formatShortDate(dep.isoDate) : dep.date}:{' '}
+                          <strong>{dep.amount} грн</strong>
                         </span>
                         <button
                           onClick={() => handleDeleteDeposit(dep.id)}
@@ -702,7 +734,7 @@ export default function ManufacturerLedger({
               >
                 <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '44px' }}>✓</th>
                 <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '55px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.75rem', width: '85px' }}>Дата</th>
+                <th style={{ padding: '0.6rem 0.75rem', width: '90px' }}>Дата</th>
                 <th style={{ padding: '0.6rem 0.75rem' }}>Модель / Артикул — Назва</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', width: '60px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '125px' }}>
@@ -819,6 +851,7 @@ export default function ManufacturerLedger({
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
+                const displayDate = row.isoDate ? formatShortDate(row.isoDate) : row.date || '—';
 
                 return (
                   <tr
@@ -858,7 +891,7 @@ export default function ManufacturerLedger({
                           {currentPairNumber}
                         </td>
                         <td style={{ padding: '0.6rem 0.75rem', fontWeight: '600' }}>
-                          {row.date || '—'}
+                          {displayDate}
                         </td>
                         <td style={{ padding: '0.6rem 0.75rem' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1034,18 +1067,17 @@ export default function ManufacturerLedger({
                           <div
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: '80px 45px 1fr 60px 100px 80px 100px',
+                              gridTemplateColumns: '135px 45px 1fr 60px 100px 80px 100px',
                               gap: '0.5rem',
                               alignItems: 'center'
                             }}
                           >
                             <input
-                              type="text"
-                              value={row.date}
-                              placeholder="ДД.ММ"
-                              onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
+                              type="date"
+                              value={row.isoDate || ''}
+                              onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
                               className="input-field"
-                              style={{ textAlign: 'center', fontSize: '0.8rem', padding: '0.25rem' }}
+                              style={{ fontSize: '0.8rem', padding: '0.25rem' }}
                             />
 
                             <div
@@ -1265,7 +1297,7 @@ export default function ManufacturerLedger({
         </div>
       </div>
 
-      {/* НИЖНІЙ ЧЕК: ГРУПУВАННЯ ЗА ДАТАМИ В ОДИН СПІЛЬНИЙ ЧЕК */}
+      {/* НИЖНІЙ ЧЕК */}
       <div
         className="card"
         style={{ border: '2px solid #86efac', background: '#f0fdf4', padding: '1rem' }}
@@ -1329,7 +1361,6 @@ export default function ManufacturerLedger({
               <div
                 key={chk.date}
                 onClick={() => {
-                  // Скролимо до першого рядка цієї дати
                   if (chk.rowIds.length > 0) {
                     scrollToRow(chk.rowIds[0]);
                   }
