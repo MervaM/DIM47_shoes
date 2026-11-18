@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ManufacturerLedger from './ManufacturerLedger';
 import SummaryView from './SummaryView';
-import ShoesCardsView from './ShoesCardsView';
 import { supabase } from '../supabaseClient';
 
 const DEFAULT_STATE = {
@@ -178,12 +177,6 @@ export default function MonthView() {
           >
             Валерій (Після видачі)
           </button>
-          <button 
-            onClick={() => setActiveTab('catalog')}
-            className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}
-          >
-            👟 Каталог взуття
-          </button>
         </div>
       </div>
 
@@ -222,10 +215,6 @@ export default function MonthView() {
           exchangeRate={valeraRate}
           setExchangeRate={setValeraRate}
         />
-      )}
-
-      {activeTab === 'catalog' && (
-        <ShoesCardsView exchangeRate={milaRate} />
       )}
     </div>
   );
