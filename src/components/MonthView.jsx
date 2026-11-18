@@ -4,6 +4,15 @@ import SummaryView from './SummaryView';
 import ShoesCardsView from './ShoesCardsView';
 import { supabase } from '../supabaseClient';
 
+const MONTHS_UKR = [
+  'Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень',
+  'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'
+];
+
+const now = new Date();
+const currentMonthName = MONTHS_UKR[now.getMonth()];
+const currentYear = now.getFullYear();
+
 const DEFAULT_STATE = {
   milaDeposit: 5000,
   milaInitialDebt: 1200,
@@ -154,7 +163,7 @@ export default function MonthView() {
               DIM47 • Система обліку та звітності
             </span>
             <h1 style={{ fontSize: '1.875rem', fontWeight: '900', color: '#111827', margin: '0.25rem 0 0 0' }}>
-              Облік виробництва та витрат: Вересень 2026
+              Облік виробництва та витрат: {currentMonthName} {currentYear}
             </h1>
           </div>
 

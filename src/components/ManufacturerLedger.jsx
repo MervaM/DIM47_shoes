@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { shoesCatalog } from '../data/shoesCatalog';
 import { numberToWords } from '../utils/numberToWords';
 
@@ -22,7 +22,8 @@ export default function ManufacturerLedger({
       date: '', 
       shoeId: shoesCatalog[0].id, 
       quantity: 1, 
-      customCostUSD: shoesCatalog[0].defaultCostUSD 
+      customCostUSD: shoesCatalog[0].defaultCostUSD,
+      patternCostUAH: 0 // Додано поле для розробки лекала
     }]);
   };
 
@@ -30,7 +31,9 @@ export default function ManufacturerLedger({
     setRows([...rows, { 
       id: Date.now(), 
       type: 'subtotal', 
-      note: 'Проміжний розрахунок' 
+      note: '',          // Текст / формула проміжного підсумку
+      manualSumUAH: 0,   // Ручна головна сума
+      isCollapsed: false // Стан згортання
     }]);
   };
 
@@ -52,23 +55,29 @@ export default function ManufacturerLedger({
     setRows(rows.filter(row => row.id !== id));
   };
 
+  // Підрахунок загальних показників
   let totalPairs = 0;
   let totalUSD = 0;
   let totalUAH = 0;
   
   rows.forEach(row => {
     if (row.type === 'item') {
-      totalPairs += Number(row.quantity);
-      const uah = Number(row.quantity) * Number(row.customCostUSD) * Number(exchangeRate);
-      totalUSD += Number(row.quantity) * Number(row.customCostUSD);
+      const qty = Number(row.quantity) || 0;
+      const costUSD = Number(row.customCostUSD) || 0;
+      const patternUAH = Number(row.patternCostUAH) || 0;
+
+      totalPairs += qty;
+      const uah = (qty * costUSD * Number(exchangeRate)) + patternUAH;
+      totalUSD += qty * costUSD;
       totalUAH += uah;
+    } else if (row.type === 'subtotal') {
+      // Якщо є ручна сума в підсумку, додаємо її до загального балансу
+      totalUAH += Number(row.manualSumUAH) || 0;
     }
   });
 
   const effectiveDeposit = (Number(deposit) || 0) - (Number(initialDebt) || 0);
   const remainingBalance = paymentMode === 'prepaid' ? totalUAH - effectiveDeposit : totalUAH;
-
-  let runningBlockUAH = 0;
 
   return (
     <div className="app-container">
@@ -139,30 +148,60 @@ export default function ManufacturerLedger({
             <thead>
               <tr>
                 <th style={{ width: '50px', textAlign: 'center' }}>№</th>
-                <th style={{ width: '110px' }}>Дата</th>
+                <th style={{ width: '100px' }}>Дата</th>
                 <th>Фото + Назва пари</th>
-                <th style={{ width: '90px', textAlign: 'center' }}>К-ть</th>
-                <th style={{ width: '110px', textAlign: 'right' }}>Ціна ($)</th>
-                <th style={{ width: '90px', textAlign: 'right' }}>Курс</th>
-                <th style={{ width: '140px', textAlign: 'right' }}>Сума (грн)</th>
+                <th style={{ width: '75px', textAlign: 'center' }}>К-ть</th>
+                <th style={{ width: '95px', textAlign: 'right' }}>Ціна ($)</th>
+                <th style={{ width: '95px', textAlign: 'right' }}>Лекало (грн)</th>
+                <th style={{ width: '80px', textAlign: 'right' }}>Курс</th>
+                <th style={{ width: '130px', textAlign: 'right' }}>Сума (грн)</th>
                 <th style={{ width: '50px', textAlign: 'center' }}></th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row, index) => {
+                // РЯДОК ПРОМІЖНОГО ПІДСУМКУ
                 if (row.type === 'subtotal') {
-                  const currentSubtotal = runningBlockUAH;
-                  runningBlockUAH = 0; 
-                  const textInWords = numberToWords(Math.round(currentSubtotal));
+                  const isCollapsed = row.isCollapsed || false;
+                  const manualSum = Number(row.manualSumUAH) || 0;
 
                   return (
                     <tr key={row.id} style={{ background: '#fffbeb', borderTop: '2px solid #fde68a', borderBottom: '2px solid #fde68a' }}>
-                      <td colSpan="6" style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: '600', color: '#92400e' }}>
-                        <span>Проміжний підсумок:</span> "{textInWords}"
+                      <td colSpan="7" style={{ padding: '0.75rem 1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <button 
+                            onClick={() => handleRowChange(row.id, 'isCollapsed', !isCollapsed)}
+                            style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '0.2rem 0.5rem', borderRadius: '0.3rem', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
+                          >
+                            {isCollapsed ? '▶ Розгорнути' : '▼ Згорнути'}
+                          </button>
+
+                          <span style={{ fontWeight: '600', color: '#92400e', whiteSpace: 'nowrap' }}>Проміжний підсумок:</span>
+
+                          {!isCollapsed && (
+                            <input 
+                              type="text" 
+                              placeholder="Введіть формулу або опис (напр. (4 800) + ($150*46,2))"
+                              value={row.note || ''}
+                              onChange={(e) => handleRowChange(row.id, 'note', e.target.value)}
+                              style={{ flex: 1, padding: '0.3rem 0.5rem', border: '1px solid #d97706', borderRadius: '0.3rem', fontSize: '0.85rem', background: '#fff' }}
+                            />
+                          )}
+                        </div>
                       </td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: '800', color: '#92400e', fontSize: '1rem' }}>
-                        {currentSubtotal.toFixed(0)} грн
+
+                      <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.3rem' }}>
+                          <input 
+                            type="number" 
+                            value={row.manualSumUAH !== undefined ? row.manualSumUAH : 0} 
+                            onChange={(e) => handleRowChange(row.id, 'manualSumUAH', Number(e.target.value))}
+                            style={{ width: '95px', padding: '0.3rem', border: '2px solid #f59e0b', borderRadius: '0.3rem', fontWeight: '900', color: '#92400e', textAlign: 'right', background: '#fff' }}
+                          />
+                          <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#92400e' }}>грн</span>
+                        </div>
                       </td>
+
                       <td style={{ textAlign: 'center' }}>
                         <button onClick={() => handleDeleteRow(row.id)} style={{ background: 'none', border: 'none', color: '#f87171', fontSize: '1.25rem', cursor: 'pointer', fontWeight: 'bold' }}>×</button>
                       </td>
@@ -170,10 +209,14 @@ export default function ManufacturerLedger({
                   );
                 }
 
+                // РЯДОК ТОВАРУ (З РЕЗУЛЬТАТОМ ЛЕКАЛА)
                 const selectedShoe = shoesCatalog.find(s => s.id === row.shoeId) || shoesCatalog[0];
-                const rowTotalUSD = row.quantity * row.customCostUSD;
-                const rowTotalUAH = rowTotalUSD * exchangeRate;
-                runningBlockUAH += rowTotalUAH;
+                const qty = Number(row.quantity) || 0;
+                const costUSD = Number(row.customCostUSD) || 0;
+                const patternUAH = Number(row.patternCostUAH) || 0;
+
+                const rowTotalUSD = qty * costUSD;
+                const rowTotalUAH = (rowTotalUSD * Number(exchangeRate)) + patternUAH;
 
                 return (
                   <tr key={row.id}>
@@ -223,6 +266,18 @@ export default function ManufacturerLedger({
                         onChange={(e) => handleRowChange(row.id, 'customCostUSD', Number(e.target.value))}
                         className="input-field"
                         style={{ textAlign: 'right', fontWeight: '600' }}
+                      />
+                    </td>
+
+                    {/* Колонка Розробка лекала */}
+                    <td style={{ textAlign: 'right' }}>
+                      <input 
+                        type="number" 
+                        placeholder="0"
+                        value={row.patternCostUAH || ''} 
+                        onChange={(e) => handleRowChange(row.id, 'patternCostUAH', Number(e.target.value))}
+                        className="input-field"
+                        style={{ textAlign: 'right', fontWeight: '600', color: '#d97706' }}
                       />
                     </td>
 
