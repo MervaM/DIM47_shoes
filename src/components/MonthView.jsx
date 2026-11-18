@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ManufacturerLedger from './ManufacturerLedger';
 import SummaryView from './SummaryView';
+import ShoesCardsView from './ShoesCardsView';
 import { supabase } from '../supabaseClient';
 
 const DEFAULT_STATE = {
@@ -17,6 +18,11 @@ const DEFAULT_STATE = {
   expenses: [
     { id: 1, date: '05.09', category: 'Реклама', description: 'Таргет Instagram / Meta', amount: 2500 },
     { id: 2, date: '10.09', category: 'Бухгалтер', description: 'Ведення ФОП та звітність', amount: 1500 }
+  ],
+  shoesCatalog: [
+    { id: 'b35', name: 'Б35 (шкіра/замша)', defaultCostUSD: 35, retailPriceUSD: 63, photo: '' },
+    { id: 'moli', name: 'Молі', defaultCostUSD: 33, retailPriceUSD: 59.4, photo: '' },
+    { id: 'y14', name: 'Y14', defaultCostUSD: 45, retailPriceUSD: 81, photo: '' }
   ]
 };
 
@@ -35,6 +41,7 @@ export default function MonthView() {
   const [valeraRows, setValeraRows] = useState(DEFAULT_STATE.valeraRows);
 
   const [expenses, setExpenses] = useState(DEFAULT_STATE.expenses);
+  const [shoesCatalog, setShoesCatalog] = useState(DEFAULT_STATE.shoesCatalog);
 
   const isRemoteUpdate = useRef(false);
 
@@ -48,6 +55,7 @@ export default function MonthView() {
     if (data.valeraRate !== undefined) setValeraRate(data.valeraRate);
     if (data.valeraRows !== undefined) setValeraRows(data.valeraRows);
     if (data.expenses !== undefined) setExpenses(data.expenses);
+    if (data.shoesCatalog !== undefined) setShoesCatalog(data.shoesCatalog);
   };
 
   useEffect(() => {
@@ -110,7 +118,8 @@ export default function MonthView() {
         milaRows,
         valeraRate,
         valeraRows,
-        expenses
+        expenses,
+        shoesCatalog
       };
 
       const { error } = await supabase
@@ -126,7 +135,7 @@ export default function MonthView() {
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [milaDeposit, milaInitialDebt, milaRate, milaRows, valeraRate, valeraRows, expenses, isLoading]);
+  }, [milaDeposit, milaInitialDebt, milaRate, milaRows, valeraRate, valeraRows, expenses, shoesCatalog, isLoading]);
 
   if (isLoading) {
     return (
@@ -177,6 +186,12 @@ export default function MonthView() {
           >
             Валерій (Після видачі)
           </button>
+          <button 
+            onClick={() => setActiveTab('catalog')}
+            className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}
+          >
+            👟 Каталог взуття
+          </button>
         </div>
       </div>
 
@@ -214,6 +229,14 @@ export default function MonthView() {
           setRows={setValeraRows}
           exchangeRate={valeraRate}
           setExchangeRate={setValeraRate}
+        />
+      )}
+
+      {activeTab === 'catalog' && (
+        <ShoesCardsView 
+          shoes={shoesCatalog}
+          setShoes={setShoesCatalog}
+          exchangeRate={milaRate}
         />
       )}
     </div>
