@@ -7,7 +7,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
   const [formData, setFormData] = useState({
     id: '',
     name: '',
-    manufacturer: 'Міла', // За замовчуванням Міла або Валерій
+    manufacturer: 'Міла',
     defaultCostUSD: '',
     retailPriceUSD: '',
     photo: ''
@@ -51,8 +51,15 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     const retailUSD = Number(formData.retailPriceUSD) || 0;
 
     if (editingId) {
+      // Якщо міняється ID, перевіряємо чи новий ID вже зайнятий іншою картою
+      if (formData.id !== editingId && shoes.some(s => s.id === formData.id)) {
+        alert('Модель з таким артикулом вже існує!');
+        return;
+      }
+
       setShoes(shoes.map(shoe => shoe.id === editingId ? {
         ...shoe,
+        id: formData.id, // Дозволяємо оновлювати ID
         name: formData.name,
         manufacturer: formData.manufacturer,
         defaultCostUSD: costUSD,
@@ -122,7 +129,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
                 value={formData.id} 
                 onChange={(e) => setFormData({...formData, id: e.target.value})}
                 className="input-field"
-                disabled={editingId !== null}
                 required
               />
             </div>
@@ -245,7 +251,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
                 </button>
               </div>
 
-              {/* Бейдж виробника на фото */}
               <div style={{ position: 'absolute', top: '10px', left: '10px', background: shoe.manufacturer === 'Міла' ? '#4f46e5' : '#d97706', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 'bold', zIndex: 2 }}>
                 {shoe.manufacturer || 'Міла'}
               </div>
@@ -260,6 +265,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
 
               <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1, justifyContent: 'space-between' }}>
                 <div>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', display: 'block', marginBottom: '0.1rem' }}>Артикул: {shoe.id}</span>
                   <h3 style={{ fontSize: '1.125rem', fontWeight: '800', color: '#111827', margin: 0 }}>
                     {shoe.name}
                   </h3>
