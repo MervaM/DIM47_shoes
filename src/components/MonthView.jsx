@@ -29,9 +29,9 @@ const DEFAULT_STATE = {
     { id: 2, date: '10.09', category: 'Бухгалтер', description: 'Ведення ФОП та звітність', amount: 1500 }
   ],
   shoesCatalog: [
-    { id: 'b35', name: 'Б35 (шкіра/замша)', defaultCostUSD: 35, retailPriceUSD: 63, photo: '' },
-    { id: 'moli', name: 'Молі', defaultCostUSD: 33, retailPriceUSD: 59.4, photo: '' },
-    { id: 'y14', name: 'Y14', defaultCostUSD: 45, retailPriceUSD: 81, photo: '' }
+    { id: 'b35', name: 'Б35 (шкіра/замша)', manufacturer: 'Міла', defaultCostUSD: 35, retailPriceUSD: 63, photo: '' },
+    { id: 'moli', name: 'Молі', manufacturer: 'Валерій', defaultCostUSD: 33, retailPriceUSD: 59.4, photo: '' },
+    { id: 'y14', name: 'Y14', manufacturer: 'Міла', defaultCostUSD: 45, retailPriceUSD: 81, photo: '' }
   ]
 };
 
@@ -227,6 +227,7 @@ export default function MonthView() {
           setInitialDebt={setMilaInitialDebt}
           exchangeRate={milaRate}
           setExchangeRate={setMilaRate}
+          shoesCatalog={shoesCatalog}
         />
       )}
 
@@ -238,6 +239,7 @@ export default function MonthView() {
           setRows={setValeraRows}
           exchangeRate={valeraRate}
           setExchangeRate={setValeraRate}
+          shoesCatalog={shoesCatalog}
         />
       )}
 

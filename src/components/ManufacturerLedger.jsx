@@ -1,6 +1,4 @@
-import React, { useState } from 'react';
-import { shoesCatalog } from '../data/shoesCatalog';
-import { numberToWords } from '../utils/numberToWords';
+import React from 'react';
 
 export default function ManufacturerLedger({ 
   manufacturerName, 
@@ -12,18 +10,23 @@ export default function ManufacturerLedger({
   exchangeRate, 
   setExchangeRate, 
   initialDebt, 
-  setInitialDebt 
+  setInitialDebt,
+  shoesCatalog = [] // Приймаємо загальний каталог
 }) {
   
+  // Фільтруємо моделі спеціально для цього виробника
+  const manufacturerShoes = shoesCatalog.filter(shoe => (shoe.manufacturer || 'Міла') === manufacturerName);
+  const defaultShoe = manufacturerShoes[0] || shoesCatalog[0] || { id: 'default', name: 'Модель', defaultCostUSD: 0 };
+
   const handleAddRow = () => {
     setRows([...rows, { 
       id: Date.now(), 
       type: 'item', 
       date: '', 
-      shoeId: shoesCatalog[0].id, 
+      shoeId: defaultShoe.id, 
       quantity: 1, 
-      customCostUSD: shoesCatalog[0].defaultCostUSD,
-      patternCostUAH: 0 // Додано поле для розробки лекала
+      customCostUSD: defaultShoe.defaultCostUSD,
+      patternCostUAH: 0 
     }]);
   };
 
@@ -31,9 +34,9 @@ export default function ManufacturerLedger({
     setRows([...rows, { 
       id: Date.now(), 
       type: 'subtotal', 
-      note: '',          // Текст / формула проміжного підсумку
-      manualSumUAH: 0,   // Ручна головна сума
-      isCollapsed: false // Стан згортання
+      note: '',          
+      manualSumUAH: 0,   
+      isCollapsed: false 
     }]);
   };
 
@@ -55,7 +58,6 @@ export default function ManufacturerLedger({
     setRows(rows.filter(row => row.id !== id));
   };
 
-  // Підрахунок загальних показників
   let totalPairs = 0;
   let totalUSD = 0;
   let totalUAH = 0;
@@ -71,7 +73,6 @@ export default function ManufacturerLedger({
       totalUSD += qty * costUSD;
       totalUAH += uah;
     } else if (row.type === 'subtotal') {
-      // Якщо є ручна сума в підсумку, додаємо її до загального балансу
       totalUAH += Number(row.manualSumUAH) || 0;
     }
   });
@@ -160,10 +161,8 @@ export default function ManufacturerLedger({
             </thead>
             <tbody>
               {rows.map((row, index) => {
-                // РЯДОК ПРОМІЖНОГО ПІДСУМКУ
                 if (row.type === 'subtotal') {
                   const isCollapsed = row.isCollapsed || false;
-                  const manualSum = Number(row.manualSumUAH) || 0;
 
                   return (
                     <tr key={row.id} style={{ background: '#fffbeb', borderTop: '2px solid #fde68a', borderBottom: '2px solid #fde68a' }}>
@@ -209,8 +208,7 @@ export default function ManufacturerLedger({
                   );
                 }
 
-                // РЯДОК ТОВАРУ (З РЕЗУЛЬТАТОМ ЛЕКАЛА)
-                const selectedShoe = shoesCatalog.find(s => s.id === row.shoeId) || shoesCatalog[0];
+                const selectedShoe = shoesCatalog.find(s => s.id === row.shoeId) || defaultShoe;
                 const qty = Number(row.quantity) || 0;
                 const costUSD = Number(row.customCostUSD) || 0;
                 const patternUAH = Number(row.patternCostUAH) || 0;
@@ -234,14 +232,19 @@ export default function ManufacturerLedger({
 
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <img src={selectedShoe.photo} alt="" style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb', flexShrink: 0 }} />
+                        {selectedShoe.photo ? (
+                          <img src={selectedShoe.photo} alt="" style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#6b7280', flexShrink: 0 }}>фото</div>
+                        )}
                         <select 
                           value={row.shoeId} 
                           onChange={(e) => handleRowChange(row.id, 'shoeId', e.target.value)}
                           className="input-field"
                           style={{ fontWeight: '500' }}
                         >
-                          {shoesCatalog.map(shoe => (
+                          {/* Показуємо тільки моделі цього виробника */}
+                          {manufacturerShoes.map(shoe => (
                             <option key={shoe.id} value={shoe.id}>{shoe.name}</option>
                           ))}
                         </select>
@@ -269,7 +272,6 @@ export default function ManufacturerLedger({
                       />
                     </td>
 
-                    {/* Колонка Розробка лекала */}
                     <td style={{ textAlign: 'right' }}>
                       <input 
                         type="number" 

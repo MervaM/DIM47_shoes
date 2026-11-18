@@ -7,14 +7,15 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
   const [formData, setFormData] = useState({
     id: '',
     name: '',
+    manufacturer: 'Міла', // За замовчуванням Міла або Валерій
     defaultCostUSD: '',
     retailPriceUSD: '',
-    photo: '' // Тут буде зберігатися картинка у форматі Base64 або посилання
+    photo: ''
   });
 
   const handleOpenAdd = () => {
     setEditingId(null);
-    setFormData({ id: '', name: '', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
+    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
     setIsAdding(true);
   };
 
@@ -23,6 +24,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     setFormData({
       id: shoe.id,
       name: shoe.name,
+      manufacturer: shoe.manufacturer || 'Міла',
       defaultCostUSD: shoe.defaultCostUSD,
       retailPriceUSD: shoe.retailPriceUSD || '',
       photo: shoe.photo || ''
@@ -30,7 +32,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     setIsAdding(true);
   };
 
-  // Функція для перетворення завантаженого файлу у Base64
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -53,6 +54,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
       setShoes(shoes.map(shoe => shoe.id === editingId ? {
         ...shoe,
         name: formData.name,
+        manufacturer: formData.manufacturer,
         defaultCostUSD: costUSD,
         retailPriceUSD: retailUSD,
         photo: formData.photo
@@ -65,6 +67,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
       setShoes([...shoes, {
         id: formData.id,
         name: formData.name,
+        manufacturer: formData.manufacturer,
         defaultCostUSD: costUSD,
         retailPriceUSD: retailUSD,
         photo: formData.photo
@@ -73,7 +76,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
 
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ id: '', name: '', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
+    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
   };
 
   const handleDeleteShoe = (id) => {
@@ -89,10 +92,10 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             Каталог продукції DIM47
           </span>
           <h2 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#111827', margin: '0.2rem 0 0.5rem 0' }}>
-            Моделі взуття та ціни
+            Моделі взуття та ціни за виробниками
           </h2>
           <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: 0 }}>
-            Зміна цін у каталозі не чіпає вже заведені старі записи виробництва (курс: {exchangeRate} грн/$)
+            Закріплюйте моделі за конкретним майстром (курс: {exchangeRate} грн/$)
           </p>
         </div>
 
@@ -104,14 +107,13 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
         </button>
       </div>
 
-      {/* Форма додавання або редагування з завантаженням фото */}
       {isAdding && (
         <form onSubmit={handleSaveShoe} className="card" style={{ padding: '1.5rem', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: '1rem', border: '2px dashed #4f46e5' }}>
           <h3 style={{ fontSize: '1.125rem', fontWeight: '800', color: '#111827', margin: 0 }}>
             {editingId ? `✏️ Редагувати модель: ${editingId}` : '➕ Створити нову модель взуття'}
           </h3>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
             <div>
               <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Артикул / ID</label>
               <input 
@@ -138,10 +140,23 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Базова собівартість ($)</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Виробник</label>
+              <select 
+                value={formData.manufacturer} 
+                onChange={(e) => setFormData({...formData, manufacturer: e.target.value})}
+                className="input-field"
+                style={{ fontWeight: 'bold', color: '#4f46e5' }}
+              >
+                <option value="Міла">Міла</option>
+                <option value="Валерій">Валерій</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Собівартість ($)</label>
               <input 
                 type="number" 
-                step="0.01"
+                step="0.01" 
                 placeholder="35" 
                 value={formData.defaultCostUSD} 
                 onChange={(e) => setFormData({...formData, defaultCostUSD: e.target.value})}
@@ -154,7 +169,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
               <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Ціна продажу ($)</label>
               <input 
                 type="number" 
-                step="0.01"
+                step="0.01" 
                 placeholder="70" 
                 value={formData.retailPriceUSD} 
                 onChange={(e) => setFormData({...formData, retailPriceUSD: e.target.value})}
@@ -164,7 +179,6 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             </div>
           </div>
 
-          {/* Завантаження файлу замість посилання */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block' }}>Фото моделі з комп'ютера</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -229,6 +243,11 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
                 >
                   ×
                 </button>
+              </div>
+
+              {/* Бейдж виробника на фото */}
+              <div style={{ position: 'absolute', top: '10px', left: '10px', background: shoe.manufacturer === 'Міла' ? '#4f46e5' : '#d97706', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 'bold', zIndex: 2 }}>
+                {shoe.manufacturer || 'Міла'}
               </div>
 
               <div style={{ width: '100%', height: '180px', background: '#f3f4f6', borderBottom: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
