@@ -14,9 +14,7 @@ export default function ManufacturerLedger({
   shoesCatalog = [] 
 }) {
   
-  // Стан для модального вікна вибору моделі за фото (зберігає ID рядка, для якого обираємо)
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-
   const manufacturerShoes = shoesCatalog.filter(shoe => (shoe.manufacturer || 'Міла') === manufacturerName);
 
   const handleAddRow = () => {
@@ -25,7 +23,6 @@ export default function ManufacturerLedger({
       type: 'item', 
       date: '', 
       shoeId: '',         
-      customName: '',     
       quantity: 1, 
       customCostUSD: '',  
       patternCostUAH: 0,
@@ -50,10 +47,10 @@ export default function ManufacturerLedger({
       if (row.id === id) {
         const updated = { ...row, [field]: value };
         
+        // Коли вибираємо з випадаючого списку — підтягуємо ціну та фото
         if (field === 'shoeId' && value) {
           const found = shoesCatalog.find(s => s.id === value);
           if (found) {
-            updated.customName = found.name;
             updated.customCostUSD = found.defaultCostUSD;
             updated.photo = found.photo || '';
           }
@@ -71,7 +68,6 @@ export default function ManufacturerLedger({
         return {
           ...row,
           shoeId: shoe.id,
-          customName: shoe.name,
           customCostUSD: shoe.defaultCostUSD,
           photo: shoe.photo || ''
         };
@@ -121,7 +117,7 @@ export default function ManufacturerLedger({
             </div>
 
             {manufacturerShoes.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#6b7280', padding: '2rem 0' }}>У каталозі немає моделей для цього виробника. Створіть їх у вкладці «Каталог взуття».</p>
+              <p style={{ textAlign: 'center', color: '#6b7280', padding: '2rem 0' }}>У каталозі немає моделей для цього виробника.</p>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '1rem' }}>
                 {manufacturerShoes.map(shoe => (
@@ -140,7 +136,7 @@ export default function ManufacturerLedger({
                       )}
                     </div>
                     <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{shoe.name}</div>
-                    <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>арт: {shoe.id || '—'}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#4f46e5', fontWeight: '700' }}>{shoe.id ? `арт: ${shoe.id}` : 'без арт.'}</div>
                   </div>
                 ))}
               </div>
@@ -207,7 +203,7 @@ export default function ManufacturerLedger({
                 <th style={{ width: '40px', textAlign: 'center' }}>№</th>
                 <th style={{ width: '50px', textAlign: 'center' }} title="Статус оплати">✓</th>
                 <th style={{ width: '90px' }}>Дата</th>
-                <th>Фото + Назва пари (Артикул)</th>
+                <th>Фото + Артикул — Назва</th>
                 <th style={{ width: '65px', textAlign: 'center' }}>К-ть</th>
                 <th style={{ width: '90px', textAlign: 'right' }}>Ціна ($)</th>
                 <th style={{ width: '90px', textAlign: 'right' }}>Лекало (грн)</th>
@@ -309,11 +305,11 @@ export default function ManufacturerLedger({
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', opacity: isPaid ? 0.7 : 1 }}>
                         
-                        {/* КЛІК НА ФОТО ВІДКРИВАЄ КАТАЛОГ ДЛЯ ВИБОРУ */}
+                        {/* КЛІК НА ФОТО ВІДКРИВАЄ КАТАЛОГ */}
                         <div 
                           onClick={() => setActiveRowForPicker(row.id)}
                           style={{ position: 'relative', width: '42px', height: '42px', flexShrink: '0', cursor: 'pointer', borderRadius: '0.5rem', border: '2px dashed #4f46e5', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f3ff' }}
-                          title="Натисніть, щоб вибрати модель з каталогу за фото"
+                          title="Натисніть, щоб вибрати модель за фото"
                         >
                           {row.photo ? (
                             <img src={row.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -322,30 +318,21 @@ export default function ManufacturerLedger({
                           )}
                         </div>
 
-                        {/* Назва та артикул */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', flex: 1 }}>
+                        {/* Випадаючий список: спочатку Артикул, потім Назва */}
+                        <div style={{ flex: 1 }}>
                           <select 
                             value={row.shoeId || ''} 
                             onChange={(e) => handleRowChange(row.id, 'shoeId', e.target.value)}
                             className="input-field"
-                            style={{ fontWeight: '600', fontSize: '0.85rem' }}
+                            style={{ fontWeight: '600', fontSize: '0.85rem', width: '100%' }}
                           >
                             <option value="">-- Виберіть модель --</option>
                             {manufacturerShoes.map(shoe => (
                               <option key={shoe.id} value={shoe.id}>
-                                {shoe.name} {shoe.id ? `(арт: ${shoe.id})` : '(без арт.)'}
+                                {shoe.id ? `${shoe.id} — ` : 'без арт. — '} {shoe.name}
                               </option>
                             ))}
                           </select>
-
-                          <input 
-                            type="text" 
-                            placeholder="Або введіть назву вручну"
-                            value={row.customName || ''}
-                            onChange={(e) => handleRowChange(row.id, 'customName', e.target.value)}
-                            className="input-field"
-                            style={{ fontSize: '0.8rem', padding: '0.2rem 0.4rem' }}
-                          />
                         </div>
                       </div>
                     </td>
