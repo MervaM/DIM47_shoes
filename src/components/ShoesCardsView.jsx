@@ -9,13 +9,13 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
     name: '',
     manufacturer: 'Міла',
     defaultCostUSD: '',
-    retailPriceUSD: '',
+    retailPriceUAH: '', // Тепер ціна продажу в грн
     photo: ''
   });
 
   const handleOpenAdd = () => {
     setEditingId(null);
-    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
+    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUAH: '', photo: '' });
     setIsAdding(true);
   };
 
@@ -26,7 +26,8 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
       name: shoe.name,
       manufacturer: shoe.manufacturer || 'Міла',
       defaultCostUSD: shoe.defaultCostUSD,
-      retailPriceUSD: shoe.retailPriceUSD || '',
+      // Підтримуємо і старе поле retailPriceUSD (якщо десь було), і нове retailPriceUAH
+      retailPriceUAH: shoe.retailPriceUAH !== undefined ? shoe.retailPriceUAH : (shoe.retailPriceUSD ? shoe.retailPriceUSD * exchangeRate : ''),
       photo: shoe.photo || ''
     });
     setIsAdding(true);
@@ -45,45 +46,44 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
 
   const handleSaveShoe = (e) => {
     e.preventDefault();
-    if (!formData.name || !formData.id) return;
+    if (!formData.name) return;
 
     const costUSD = Number(formData.defaultCostUSD) || 0;
-    const retailUSD = Number(formData.retailPriceUSD) || 0;
+    const retailUAH = Number(formData.retailPriceUAH) || 0;
 
     if (editingId) {
-      // Якщо міняється ID, перевіряємо чи новий ID вже зайнятий іншою картою
-      if (formData.id !== editingId && shoes.some(s => s.id === formData.id)) {
+      if (formData.id && formData.id !== editingId && shoes.some(s => s.id === formData.id)) {
         alert('Модель з таким артикулом вже існує!');
         return;
       }
 
       setShoes(shoes.map(shoe => shoe.id === editingId ? {
         ...shoe,
-        id: formData.id, // Дозволяємо оновлювати ID
-        name: formData.name,
-        manufacturer: formData.manufacturer,
-        defaultCostUSD: costUSD,
-        retailPriceUSD: retailUSD,
-        photo: formData.photo
-      } : shoe));
-    } else {
-      if (shoes.some(s => s.id === formData.id)) {
-        alert('Модель з таким артикулом вже існує!');
-        return;
-      }
-      setShoes([...shoes, {
         id: formData.id,
         name: formData.name,
         manufacturer: formData.manufacturer,
         defaultCostUSD: costUSD,
-        retailPriceUSD: retailUSD,
+        retailPriceUAH: retailUAH,
+        photo: formData.photo
+      } : shoe));
+    } else {
+      if (formData.id && shoes.some(s => s.id === formData.id)) {
+        alert('Модель з таким артикулом вже існує!');
+        return;
+      }
+      setShoes([...shoes, {
+        id: formData.id || `shoe_${Date.now()}`,
+        name: formData.name,
+        manufacturer: formData.manufacturer,
+        defaultCostUSD: costUSD,
+        retailPriceUAH: retailUAH,
         photo: formData.photo
       }]);
     }
 
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUSD: '', photo: '' });
+    setFormData({ id: '', name: '', manufacturer: 'Міла', defaultCostUSD: '', retailPriceUAH: '', photo: '' });
   };
 
   const handleDeleteShoe = (id) => {
@@ -102,7 +102,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             Моделі взуття та ціни за виробниками
           </h2>
           <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: 0 }}>
-            Закріплюйте моделі за конкретним майстром (курс: {exchangeRate} грн/$)
+            Собівартість у $, ціна продажу у гривнях (курс: {exchangeRate} грн/$)
           </p>
         </div>
 
@@ -117,19 +117,18 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
       {isAdding && (
         <form onSubmit={handleSaveShoe} className="card" style={{ padding: '1.5rem', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: '1rem', border: '2px dashed #4f46e5' }}>
           <h3 style={{ fontSize: '1.125rem', fontWeight: '800', color: '#111827', margin: 0 }}>
-            {editingId ? `✏️ Редагувати модель: ${editingId}` : '➕ Створити нову модель взуття'}
+            {editingId ? `✏️ Редагувати модель` : '➕ Створити нову модель взуття'}
           </h3>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Артикул / ID</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Артикул / ID (необов'язково)</label>
               <input 
                 type="text" 
-                placeholder="напр. b36" 
+                placeholder="напр. 79-4" 
                 value={formData.id} 
                 onChange={(e) => setFormData({...formData, id: e.target.value})}
                 className="input-field"
-                required
               />
             </div>
 
@@ -137,7 +136,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
               <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Назва моделі</label>
               <input 
                 type="text" 
-                placeholder="напр. Лофери класичні" 
+                placeholder="напр. Кросівки 012" 
                 value={formData.name} 
                 onChange={(e) => setFormData({...formData, name: e.target.value})}
                 className="input-field"
@@ -163,7 +162,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
               <input 
                 type="number" 
                 step="0.01" 
-                placeholder="35" 
+                placeholder="37" 
                 value={formData.defaultCostUSD} 
                 onChange={(e) => setFormData({...formData, defaultCostUSD: e.target.value})}
                 className="input-field"
@@ -172,13 +171,13 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Ціна продажу ($)</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4b5563', display: 'block', marginBottom: '0.25rem' }}>Ціна продажу (грн)</label>
               <input 
                 type="number" 
                 step="0.01" 
-                placeholder="70" 
-                value={formData.retailPriceUSD} 
-                onChange={(e) => setFormData({...formData, retailPriceUSD: e.target.value})}
+                placeholder="3150" 
+                value={formData.retailPriceUAH} 
+                onChange={(e) => setFormData({...formData, retailPriceUAH: e.target.value})}
                 className="input-field"
                 required
               />
@@ -228,8 +227,13 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
         {shoes.map(shoe => {
           const costUSD = Number(shoe.defaultCostUSD) || 0;
           const costUAH = costUSD * exchangeRate;
-          const retailUSD = Number(shoe.retailPriceUSD) || 0;
-          const retailUAH = retailUSD * exchangeRate;
+          
+          // Розраховуємо ціну в грн (якщо заведено в грн, беремо її, інакше конвертуємо зі старого поля в USD)
+          const retailUAH = shoe.retailPriceUAH !== undefined 
+            ? Number(shoe.retailPriceUAH) || 0 
+            : (Number(shoe.retailPriceUSD || 0) * exchangeRate);
+          
+          const retailUSDEquivalent = exchangeRate > 0 ? retailUAH / exchangeRate : 0;
 
           return (
             <div key={shoe.id} className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
@@ -251,7 +255,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
                 </button>
               </div>
 
-              <div style={{ position: 'absolute', top: '10px', left: '10px', background: shoe.manufacturer === 'Міла' ? '#4f46e5' : '#d97706', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 'bold', zIndex: 2 }}>
+              <div style={{ position: 'absolute', top: '10px', left: '10px', background: (shoe.manufacturer || 'Міла') === 'Міла' ? '#4f46e5' : '#d97706', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 'bold', zIndex: 2 }}>
                 {shoe.manufacturer || 'Міла'}
               </div>
 
@@ -265,7 +269,7 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
 
               <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1, justifyContent: 'space-between' }}>
                 <div>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', display: 'block', marginBottom: '0.1rem' }}>Артикул: {shoe.id}</span>
+                  {shoe.id && <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', display: 'block', marginBottom: '0.1rem' }}>Артикул: {shoe.id}</span>}
                   <h3 style={{ fontSize: '1.125rem', fontWeight: '800', color: '#111827', margin: 0 }}>
                     {shoe.name}
                   </h3>
@@ -273,15 +277,15 @@ export default function ShoesCardsView({ shoes, setShoes, exchangeRate = 45 }) {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f9fafb', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb' }}>
                   <div>
-                    <span style={{ fontSize: '0.7rem', color: '#6b7280', display: 'block', fontWeight: '600' }}>Вартість ($):</span>
+                    <span style={{ fontSize: '0.7rem', color: '#6b7280', display: 'block', fontWeight: '600' }}>Собівартість:</span>
                     <span style={{ fontSize: '1rem', fontWeight: '800', color: '#4f46e5' }}>${costUSD.toFixed(2)}</span>
                     <span style={{ fontSize: '0.7rem', color: '#9ca3af', display: 'block' }}>({costUAH.toFixed(0)} грн)</span>
                   </div>
 
                   <div>
                     <span style={{ fontSize: '0.7rem', color: '#6b7280', display: 'block', fontWeight: '600' }}>Ціна продажу:</span>
-                    <span style={{ fontSize: '1rem', fontWeight: '800', color: '#16a34a' }}>${retailUSD.toFixed(2)}</span>
-                    <span style={{ fontSize: '0.7rem', color: '#9ca3af', display: 'block' }}>({retailUAH.toFixed(0)} грн)</span>
+                    <span style={{ fontSize: '1rem', fontWeight: '800', color: '#16a34a' }}>{retailUAH.toFixed(0)} грн</span>
+                    <span style={{ fontSize: '0.7rem', color: '#9ca3af', display: 'block' }}>(${retailUSDEquivalent.toFixed(2)})</span>
                   </div>
                 </div>
               </div>
