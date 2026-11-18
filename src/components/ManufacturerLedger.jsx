@@ -31,7 +31,7 @@ export default function ManufacturerLedger({
       isPaid: false, 
       paidAt: '', 
       photo: '',
-      isEditing: true // Новий рядок одразу відкритий для заповнення
+      isEditing: true 
     }]);
   };
 
@@ -65,21 +65,6 @@ export default function ManufacturerLedger({
         }
 
         return updated;
-      }
-      return row;
-    }));
-  };
-
-  const handlePayAllUnpaid = () => {
-    const nowStr = new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: '2-digit' });
-    setRows(rows.map(row => {
-      if (row.type === 'item' && !row.isPaid) {
-        return {
-          ...row,
-          isPaid: true,
-          paidAt: nowStr,
-          isEditing: false // Згортаємо в суцільний рядок при оплаті
-        };
       }
       return row;
     }));
@@ -165,8 +150,11 @@ export default function ManufacturerLedger({
   });
 
   const totalUAH = shoesOnlyUAH + totalPatternsUAH;
-  const effectiveDeposit = (Number(deposit) || 0) - (Number(initialDebt) || 0);
-  const remainingBalance = paymentMode === 'prepaid' ? effectiveDeposit - paidUAH : unpaidUAH;
+  const currentDeposit = Number(deposit) || 0;
+  // Якщо є аванс, залишок авансу = Аванс - Оплачено. Якщо авансу нема (0), залишок = невиплачений борг (unpaidUAH)
+  const remainingBalance = paymentMode === 'prepaid' 
+    ? (currentDeposit > 0 ? currentDeposit - paidUAH : unpaidUAH) 
+    : unpaidUAH;
 
   return (
     <div className="app-container" style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '100%', overflowX: 'hidden' }}>
@@ -210,7 +198,7 @@ export default function ManufacturerLedger({
       {/* ОСНОВНА КАРТКА ОБЛІКУ */}
       <div className="card" style={{ padding: '1rem' }}>
         
-        {/* ШАПКА */}
+        {/* ШАПКА З АВАНСОМ ТА ПІДСУМКАМИ */}
         <div className="header-box" style={{ padding: '0 0 1rem 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
@@ -222,30 +210,18 @@ export default function ManufacturerLedger({
             </span>
           </div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', background: '#f9fafb', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', background: '#f9fafb', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb' }}>
             {paymentMode === 'prepaid' && (
-              <>
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#6b7280', marginBottom: '0.25rem' }}>Борг (грн):</span>
-                  <input 
-                    type="number" 
-                    value={initialDebt} 
-                    onChange={(e) => setInitialDebt(Number(e.target.value))}
-                    className="input-field"
-                    style={{ fontWeight: 'bold', color: '#dc2626', textAlign: 'right', width: '100%' }}
-                  />
-                </div>
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#6b7280', marginBottom: '0.25rem' }}>Аванс (грн):</span>
-                  <input 
-                    type="number" 
-                    value={deposit} 
-                    onChange={(e) => setDeposit(Number(e.target.value))}
-                    className="input-field"
-                    style={{ fontWeight: 'bold', color: '#16a34a', textAlign: 'right', width: '100%' }}
-                  />
-                </div>
-              </>
+              <div>
+                <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#6b7280', marginBottom: '0.25rem' }}>Аванс (грн):</span>
+                <input 
+                  type="number" 
+                  value={deposit} 
+                  onChange={(e) => setDeposit(Number(e.target.value))}
+                  className="input-field"
+                  style={{ fontWeight: 'bold', color: '#16a34a', textAlign: 'right', width: '100%', background: '#fff' }}
+                />
+              </div>
             )}
 
             <div style={{ background: '#f0fdf4', padding: '0.6rem', borderRadius: '0.5rem', border: '1px solid #bbf7d0', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -257,16 +233,16 @@ export default function ManufacturerLedger({
 
             <div style={{ background: '#f5f3ff', padding: '0.6rem', borderRadius: '0.5rem', border: '1px solid #ede9fe', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
-                {paymentMode === 'prepaid' ? 'Залишок / Борг:' : 'Не оплачено:'}
+                {currentDeposit > 0 ? 'Залишок авансу:' : 'Залишок / Борг:'}
               </span>
-              <span style={{ fontSize: '1.1rem', fontWeight: '900', color: unpaidUAH === 0 ? '#16a34a' : '#dc2626' }}>
-                {unpaidUAH.toFixed(0)} грн
+              <span style={{ fontSize: '1.1rem', fontWeight: '900', color: remainingBalance < 0 ? '#dc2626' : (remainingBalance === 0 ? '#16a34a' : '#312e81') }}>
+                {remainingBalance.toFixed(0)} грн
               </span>
             </div>
           </div>
         </div>
 
-        {/* СПИСОК ПОЗИЦІЙ (АДАПТИВНИЙ ПІД ТЕЛЕФОН ТА ПК) */}
+        {/* СПИСОК ПОЗИЦІЙ */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {rows.map((row, index) => {
             if (row.type === 'subtotal') {
@@ -313,13 +289,12 @@ export default function ManufacturerLedger({
             const rRate = Number(row.rowRate) || 0;
             const isPaid = row.isPaid || false;
             
-            // Якщо модель вже вибрана і explicitly не натиснули редагування — показуємо суцільним рядком
             const isEditing = row.isEditing !== undefined ? row.isEditing : !row.shoeId;
 
             const rowUSD = qty * costUSD;
             const shoePartUAH = rowUSD * rRate;
             const shoeInfo = shoesCatalog.find(s => s.id === row.shoeId);
-            const displayName = shoeInfo ? `${shoeInfo.id ? shoeInfo.id + ' — ' : ''}${shoeInfo.name}` : 'Модель не вибрана';
+            const displayName = shoeInfo ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}` : 'Модель не вибрана';
 
             return (
               <div 
@@ -335,10 +310,9 @@ export default function ManufacturerLedger({
                 }}
               >
                 {!isEditing ? (
-                  /* === КОМПАКТНИЙ СУЦІЛЬНИЙ РЯДОК (ДЛЯ ТЕЛЕФОНУ ТА ЧИСТОГО ПЕРЕГЛЯДУ) === */
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  /* === КОМПАКТНИЙ СУЦІЛЬНИЙ РЯДОК === */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     
-                    {/* Верхня лінія: №, Дата, Статус оплати, Кнопки редагування та видалення */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#9ca3af' }}>#{index + 1}</span>
@@ -369,8 +343,7 @@ export default function ManufacturerLedger({
                         <button 
                           type="button"
                           onClick={() => handleRowChange(row.id, 'isEditing', true)}
-                          style={{ background: '#eef2ff', color: '#4f46e5', border: 'none', padding: '0.25rem 0.55rem', borderRadius: '0.4rem', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
-                          title="Редагувати рядок"
+                          style={{ background: '#eef2ff', color: '#4f46e5', border: 'none', padding: '0.2rem 0.5rem', borderRadius: '0.4rem', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
                         >
                           ✎ Змінити
                         </button>
@@ -384,9 +357,8 @@ export default function ManufacturerLedger({
                       </div>
                     </div>
 
-                    {/* Середня лінія: Фото + Артикул та Назва */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', opacity: isPaid ? 0.75 : 1 }}>
-                      <div style={{ width: '44px', height: '44px', borderRadius: '0.5rem', overflow: 'hidden', background: '#f3f4f6', flexShrink: 0, border: '1px solid #e5e7eb' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', overflow: 'hidden', background: '#f3f4f6', flexShrink: 0, border: '1px solid #e5e7eb' }}>
                         {row.photo ? (
                           <img src={row.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
@@ -395,16 +367,15 @@ export default function ManufacturerLedger({
                       </div>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: '800', fontSize: '0.9rem', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <div style={{ fontWeight: '800', fontSize: '0.85rem', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {displayName}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#4b5563', marginTop: '0.15rem' }}>
-                          <strong>{qty} шт.</strong> × ${costUSD} <span style={{ color: '#9ca3af' }}>|</span> Курс: <strong>{rRate}</strong>
-                          {patternUAH > 0 && <span style={{ color: '#d97706', fontWeight: '700' }}> + {patternUAH} грн лекало</span>}
+                        <div style={{ fontSize: '0.75rem', color: '#4b5563', marginTop: '0.1rem' }}>
+                          {qty} шт. × ${costUSD} (курс {rRate})
+                          {patternUAH > 0 && <span style={{ color: '#d97706', fontWeight: '700' }}> + {patternUAH} лекало</span>}
                         </div>
                       </div>
 
-                      {/* Права частина: Сума */}
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         <div style={{ fontWeight: '900', fontSize: '0.95rem', color: isPaid ? '#16a34a' : '#4f46e5' }}>
                           {shoePartUAH.toFixed(0)} грн {isPaid && '✓'}
@@ -417,10 +388,10 @@ export default function ManufacturerLedger({
 
                   </div>
                 ) : (
-                  /* === РЕЖИМ РЕДАГУВАННЯ (ПОЛЯ ВВОДУ) === */
+                  /* === РЕЖИМ РЕДАГУВАННЯ === */
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f3f4f6', paddingBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}>✏️ Редагування позиції #{index + 1}</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}>✏️ Редагування #{index + 1}</span>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button 
                           type="button"
@@ -439,7 +410,6 @@ export default function ManufacturerLedger({
                       </div>
                     </div>
 
-                    {/* Ряд 1: Дата + Модель за фото */}
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <input 
                         type="text" 
@@ -453,7 +423,7 @@ export default function ManufacturerLedger({
                       <div 
                         onClick={() => setActiveRowForPicker(row.id)}
                         style={{ width: '40px', height: '40px', flexShrink: 0, cursor: 'pointer', borderRadius: '0.5rem', border: '2px dashed #4f46e5', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f3ff' }}
-                        title="Натисніть, щоб вибрати за фото"
+                        title="Вибрати за фото"
                       >
                         {row.photo ? (
                           <img src={row.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -477,7 +447,6 @@ export default function ManufacturerLedger({
                       </select>
                     </div>
 
-                    {/* Ряд 2: Кількість, Ціна ($), Лекало (грн), Курс */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                       <div>
                         <label style={{ fontSize: '0.65rem', color: '#6b7280', display: 'block', fontWeight: 'bold' }}>К-ть</label>
@@ -535,7 +504,7 @@ export default function ManufacturerLedger({
           })}
         </div>
 
-        {/* ПІДСУМКОВИЙ БЛОК ПІД СПИСКОМ (ЗАВЖДИ ВИДНИЙ НА ТЕЛЕФОНІ) */}
+        {/* ПІДСУМКОВИЙ БЛОК ПІД СПИСКОМ */}
         <div style={{ marginTop: '1.25rem', background: '#f8fafc', border: '2px solid #e2e8f0', borderRadius: '0.75rem', padding: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', textAlign: 'center' }}>
             <div style={{ background: '#fff', padding: '0.4rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb' }}>
@@ -564,7 +533,10 @@ export default function ManufacturerLedger({
 
             <button 
               type="button"
-              onClick={handlePayAllUnpaid}
+              onClick={() => {
+                const nowStr = new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                setRows(rows.map(r => r.type === 'item' ? { ...r, isPaid: true, paidAt: nowStr } : r));
+              }}
               style={{ 
                 background: unpaidUAH === 0 ? '#16a34a' : '#4f46e5', 
                 color: '#ffffff', 
@@ -584,7 +556,7 @@ export default function ManufacturerLedger({
 
       </div>
 
-      {/* НИЖНІЙ ЧЕК / РЕЄСТР ОПЛАЧЕНИХ ПАРТІЙ */}
+      {/* НИЖНІЙ ЧЕК / РЕЄСТР ОПЛАЧЕНИХ ЗАМОВЛЕНЬ */}
       <div className="card" style={{ border: '2px solid #86efac', background: '#f0fdf4', padding: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <div>
@@ -603,7 +575,7 @@ export default function ManufacturerLedger({
 
         {paidItemsList.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', color: '#15803d', fontSize: '0.85rem', background: '#ffffff', borderRadius: '0.5rem' }}>
-            Натисніть кнопку суми вгорі, щоб оплатити партію й перенести в чек.
+            Ще немає оплачених позицій. Позначте замовлення галочкою або натисніть кнопку оплати суми вгорі.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
@@ -611,20 +583,31 @@ export default function ManufacturerLedger({
               <div 
                 key={item.id} 
                 onClick={() => scrollToRow(item.id)}
-                style={{ background: '#ffffff', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}
+                style={{ 
+                  background: '#ffffff', 
+                  padding: '0.65rem 0.85rem', 
+                  borderRadius: '0.5rem', 
+                  border: '1px solid #bbf7d0', 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  gap: '0.5rem', 
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                }}
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.date && <span style={{ color: '#6b7280', marginRight: '0.3rem' }}>{item.date}</span>}
-                    {item.shoeArticle && <span style={{ color: '#4f46e5', marginRight: '0.3rem' }}>[{item.shoeArticle}]</span>}
-                    {item.shoeName}
+                  <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#111827', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    <span style={{ color: '#374151', fontWeight: '700' }}>{item.date || '—'}</span>
+                    <span style={{ color: '#4f46e5' }}>{item.shoeArticle ? `[${item.shoeArticle}]` : ''}</span>
+                    <span>{item.shoeName}</span>
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: '#4b5563' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#4b5563', marginTop: '0.1rem' }}>
                     {item.quantity} шт. × ${item.customCostUSD} (курс {item.rowRate})
-                    {item.patternCostUAH > 0 && <span style={{ color: '#d97706' }}> + {item.patternCostUAH} лекало</span>}
+                    {item.patternCostUAH > 0 && <span style={{ color: '#d97706', fontWeight: '700' }}> + {item.patternCostUAH} лекало</span>}
                   </div>
                 </div>
-                <div style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem', flexShrink: 0 }}>
+                <div style={{ fontWeight: '900', color: '#16a34a', fontSize: '1rem', flexShrink: 0 }}>
                   +{item.calculatedUAH.toFixed(0)} грн
                 </div>
               </div>
