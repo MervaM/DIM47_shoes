@@ -1,16 +1,23 @@
 import React, { useState, useRef } from 'react';
 
-function formatShortDate(isoDate) {
-  if (!isoDate || typeof isoDate !== 'string') return '';
-  const parts = isoDate.split('-'); // очікуємо YYYY-MM-DD
-  if (parts.length === 3) {
+// Приводить будь-яку дату (YYYY-MM-DD або ДД.ММ.РРРР) до формату ДД.ММ
+function formatDayMonth(val) {
+  if (!val || typeof val !== 'string') return '';
+  const trimmed = val.trim();
+  // Якщо ISO формат YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    const parts = trimmed.slice(0, 10).split('-');
     return `${parts[2]}.${parts[1]}`;
   }
-  return isoDate;
+  // Якщо ДД.ММ.РР або ДД.ММ.РРРР
+  if (/^\d{2}\.\d{2}\.\d{2,4}$/.test(trimmed)) {
+    return trimmed.slice(0, 5);
+  }
+  return trimmed;
 }
 
 function getMonthFromDate(isoDate, fallbackMonth) {
-  if (isoDate && typeof isoDate === 'string' && isoDate.length >= 7) {
+  if (isoDate && typeof isoDate === 'string' && isoDate.length >= 7 && isoDate.includes('-')) {
     return isoDate.slice(0, 7); // YYYY-MM
   }
   return fallbackMonth;
@@ -29,8 +36,8 @@ export default function ManufacturerLedger({
   setInitialDebt,
   shoesCatalog = []
 }) {
-  const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const defaultMonth = todayISO.slice(0, 7); // YYYY-MM
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const defaultMonth = todayISO.slice(0, 7);
 
   const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
   const [newMonthInput, setNewMonthInput] = useState('');
@@ -60,7 +67,6 @@ export default function ManufacturerLedger({
     setNewMonthInput('');
   };
 
-  // Фільтруємо рядки за місяцем (з урахуванням isoDate, якщо month ще не був проставлений)
   const monthRows = rows.filter((r) => {
     const rowMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
     return rowMonth === selectedMonth;
@@ -79,13 +85,14 @@ export default function ManufacturerLedger({
         id: Date.now(),
         isoDate: initialDate,
         month: selectedMonth,
-        date: formatShortDate(initialDate),
+        date: formatDayMonth(initialDate),
         type: 'item',
         shoeId: '',
         quantity: 1,
         customCostUSD: '',
         patternCostUAH: 0,
         rowRate: exchangeRate || 45.0,
+        isSelectedForPay: false,
         isPaid: false,
         paidAt: '',
         photo: '',
@@ -117,7 +124,7 @@ export default function ManufacturerLedger({
       id: Date.now(),
       isoDate: chosenDate,
       month: depMonth,
-      date: formatShortDate(chosenDate),
+      date: formatDayMonth(chosenDate),
       amount: Number(newDepositAmount) || 0
     };
     setDepositsList([...depositsList, item]);
@@ -138,7 +145,7 @@ export default function ManufacturerLedger({
           const updated = { ...row, [field]: value };
 
           if (field === 'isoDate') {
-            updated.date = formatShortDate(value);
+            updated.date = formatDayMonth(value);
             const nextMonth = getMonthFromDate(value, selectedMonth);
             updated.month = nextMonth;
             if (nextMonth !== selectedMonth) {
@@ -151,17 +158,15 @@ export default function ManufacturerLedger({
             if (found) {
               updated.customCostUSD = found.defaultCostUSD;
               updated.photo = found.photo || '';
+              updated.isEditing = false;
             }
           }
 
           if (field === 'isPaid') {
-            updated.paidAt = value
-              ? new Date().toLocaleDateString('uk-UA', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: '2-digit'
-                })
-              : '';
+            updated.paidAt = value ? formatDayMonth(todayISO) : '';
+            if (value) {
+              updated.isSelectedForPay = false;
+            }
           }
 
           return updated;
@@ -180,7 +185,8 @@ export default function ManufacturerLedger({
             ...row,
             shoeId: shoe.id,
             customCostUSD: shoe.defaultCostUSD,
-            photo: shoe.photo || ''
+            photo: shoe.photo || '',
+            isEditing: false
           };
         }
         return row;
@@ -206,8 +212,14 @@ export default function ManufacturerLedger({
 
   let totalPairs = 0;
   let totalUSD = 0;
-  let shoesOnlyUAH = 0;
+  let totalUAH = 0;
   let totalPatternsUAH = 0;
+
+  let selectedPairs = 0;
+  let selectedUSD = 0;
+  let selectedPatternsUAH = 0;
+  let selectedTotalUAH = 0;
+
   let paidPairs = 0;
   let paidUAH = 0;
   let unpaidUAH = 0;
@@ -221,21 +233,29 @@ export default function ManufacturerLedger({
       const patternUAH = Number(row.patternCostUAH) || 0;
       const rRate = Number(row.rowRate) || 0;
       const isPaid = Boolean(row.isPaid);
+      const isSelected = Boolean(row.isSelectedForPay);
 
-      totalPairs += qty;
       const rowUSD = qty * costUSD;
       const shoePartUAH = rowUSD * rRate;
       const rowFullUAH = shoePartUAH + patternUAH;
 
+      totalPairs += qty;
       totalUSD += rowUSD;
-      shoesOnlyUAH += shoePartUAH;
       totalPatternsUAH += patternUAH;
+      totalUAH += rowFullUAH;
+
+      if (!isPaid && isSelected) {
+        selectedPairs += qty;
+        selectedUSD += rowUSD;
+        selectedPatternsUAH += patternUAH;
+        selectedTotalUAH += rowFullUAH;
+      }
 
       if (isPaid) {
         paidPairs += qty;
         paidUAH += rowFullUAH;
 
-        const labelDate = row.isoDate ? formatShortDate(row.isoDate) : row.date || 'Без дати';
+        const labelDate = formatDayMonth(row.isoDate || row.date) || '—';
         if (!paidGroupsMap[labelDate]) {
           paidGroupsMap[labelDate] = {
             date: labelDate,
@@ -256,7 +276,6 @@ export default function ManufacturerLedger({
 
   const paidChecksList = Object.values(paidGroupsMap);
   const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  const totalUAH = shoesOnlyUAH + totalPatternsUAH;
   const remainingBalance =
     paymentMode === 'prepaid'
       ? totalDepositsSum > 0
@@ -264,18 +283,36 @@ export default function ManufacturerLedger({
         : unpaidUAH
       : unpaidUAH;
 
-  const handlePayUnpaidInMonth = () => {
-    if (unpaidUAH <= 0) return;
-    const nowStr = new Date().toLocaleDateString('uk-UA', {
-      day: '2-digit',
-      month: '2-digit',
-      year: '2-digit'
-    });
+  const handlePaySelectionOrUnpaid = (forceSelectedOnly = false) => {
+    const hasSelected = selectedTotalUAH > 0;
+    if (forceSelectedOnly && !hasSelected) return;
+    if (!hasSelected && unpaidUAH <= 0) return;
+
+    const nowShort = formatDayMonth(todayISO);
+
     setRows(
       rows.map((r) => {
         const rMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
         if (rMonth === selectedMonth && r.type === 'item' && !r.isPaid) {
-          return { ...r, isPaid: true, paidAt: nowStr, isEditing: false };
+          if (hasSelected) {
+            if (r.isSelectedForPay) {
+              return {
+                ...r,
+                isPaid: true,
+                isSelectedForPay: false,
+                paidAt: nowShort,
+                isEditing: false
+              };
+            }
+            return r;
+          }
+          return {
+            ...r,
+            isPaid: true,
+            isSelectedForPay: false,
+            paidAt: nowShort,
+            isEditing: false
+          };
         }
         return r;
       })
@@ -283,6 +320,8 @@ export default function ManufacturerLedger({
   };
 
   let runningPairNumber = 0;
+  const hasSelectedItems = selectedTotalUAH > 0;
+  const buttonAmount = hasSelectedItems ? selectedTotalUAH : unpaidUAH;
 
   return (
     <div
@@ -551,18 +590,39 @@ export default function ManufacturerLedger({
                   💰 Аванси ({selectedMonth}):
                 </span>
 
-                <div style={{ display: 'flex', gap: '0.3rem' }}>
-                  <input
-                    type="date"
-                    value={newDepositDate}
-                    onChange={(e) => setNewDepositDate(e.target.value)}
+                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                  {/* Відображаємо ДД.ММ + компактну кнопку календаря */}
+                  <div
                     style={{
-                      padding: '0.2rem 0.3rem',
-                      fontSize: '0.75rem',
+                      position: 'relative',
+                      display: 'inline-flex',
+                      alignItems: 'center',
                       border: '1px solid #d1d5db',
-                      borderRadius: '0.3rem'
+                      borderRadius: '0.3rem',
+                      padding: '0.2rem 0.4rem',
+                      background: '#fff',
+                      fontSize: '0.75rem',
+                      fontWeight: '700',
+                      minWidth: '68px',
+                      justifyContent: 'space-between'
                     }}
-                  />
+                  >
+                    <span>{formatDayMonth(newDepositDate) || 'ДД.ММ'}</span>
+                    <span style={{ marginLeft: '4px', fontSize: '0.7rem' }}>📅</span>
+                    <input
+                      type="date"
+                      value={newDepositDate}
+                      onChange={(e) => setNewDepositDate(e.target.value)}
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        opacity: 0,
+                        cursor: 'pointer',
+                        width: '100%'
+                      }}
+                    />
+                  </div>
+
                   <input
                     type="number"
                     placeholder="Сума грн"
@@ -620,8 +680,7 @@ export default function ManufacturerLedger({
                         }}
                       >
                         <span>
-                          📅 {dep.isoDate ? formatShortDate(dep.isoDate) : dep.date}:{' '}
-                          <strong>{dep.amount} грн</strong>
+                          {formatDayMonth(dep.isoDate || dep.date)}: <strong>{dep.amount} грн</strong>
                         </span>
                         <button
                           onClick={() => handleDeleteDeposit(dep.id)}
@@ -732,9 +791,14 @@ export default function ManufacturerLedger({
                   borderBottom: '2px solid #e2e8f0'
                 }}
               >
-                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '44px' }}>✓</th>
+                <th
+                  style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '44px' }}
+                  title="Вибрати позицію для оплати"
+                >
+                  ✓
+                </th>
                 <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '55px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.75rem', width: '90px' }}>Дата</th>
+                <th style={{ padding: '0.6rem 0.75rem', width: '80px' }}>Дата</th>
                 <th style={{ padding: '0.6rem 0.75rem' }}>Модель / Артикул — Назва</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', width: '60px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '125px' }}>
@@ -776,7 +840,7 @@ export default function ManufacturerLedger({
                             {isCollapsed ? '▶' : '▼'}
                           </button>
                           <span style={{ fontWeight: '700', color: '#92400e', fontSize: '0.8rem' }}>
-                            Підсумок:
+                            Підсумок проміжку:
                           </span>
                           {!isCollapsed && (
                             <input
@@ -797,23 +861,44 @@ export default function ManufacturerLedger({
                         </div>
                       </td>
                       <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
-                        <input
-                          type="number"
-                          value={row.manualSumUAH !== undefined ? row.manualSumUAH : 0}
-                          onChange={(e) =>
-                            handleRowChange(row.id, 'manualSumUAH', Number(e.target.value))
-                          }
-                          style={{
-                            width: '90px',
-                            padding: '0.25rem',
-                            border: '2px solid #f59e0b',
-                            borderRadius: '0.3rem',
-                            fontWeight: '900',
-                            color: '#92400e',
-                            textAlign: 'right',
-                            background: '#fff'
-                          }}
-                        />
+                        {hasSelectedItems ? (
+                          <button
+                            type="button"
+                            onClick={() => handlePaySelectionOrUnpaid(true)}
+                            title="Натисніть, щоб оплатити вибрані позиції"
+                            style={{
+                              background: '#16a34a',
+                              color: '#ffffff',
+                              border: 'none',
+                              padding: '0.3rem 0.6rem',
+                              borderRadius: '0.4rem',
+                              fontWeight: '900',
+                              fontSize: '0.8rem',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {selectedTotalUAH.toFixed(0)} грн • Оплатити
+                          </button>
+                        ) : (
+                          <input
+                            type="number"
+                            value={row.manualSumUAH !== undefined ? row.manualSumUAH : 0}
+                            onChange={(e) =>
+                              handleRowChange(row.id, 'manualSumUAH', Number(e.target.value))
+                            }
+                            style={{
+                              width: '90px',
+                              padding: '0.25rem',
+                              border: '2px solid #f59e0b',
+                              borderRadius: '0.3rem',
+                              fontWeight: '900',
+                              color: '#92400e',
+                              textAlign: 'right',
+                              background: '#fff'
+                            }}
+                          />
+                        )}
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <button
@@ -842,6 +927,7 @@ export default function ManufacturerLedger({
                 const patternUAH = Number(row.patternCostUAH) || 0;
                 const rRate = Number(row.rowRate) || 0;
                 const isPaid = Boolean(row.isPaid);
+                const isSelected = Boolean(row.isSelectedForPay);
 
                 const isEditing = row.isEditing !== undefined ? row.isEditing : !row.shoeId;
                 const rowUSD = qty * costUSD;
@@ -851,14 +937,19 @@ export default function ManufacturerLedger({
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
-                const displayDate = row.isoDate ? formatShortDate(row.isoDate) : row.date || '—';
+                // Строго формат ДД.ММ
+                const displayDate = formatDayMonth(row.isoDate || row.date) || '—';
 
                 return (
                   <tr
                     key={row.id}
                     ref={(el) => (rowRefs.current[row.id] = el)}
                     style={{
-                      background: isPaid ? '#f1f5f9' : '#ffffff',
+                      background: isPaid
+                        ? '#f1f5f9'
+                        : isSelected
+                        ? '#eef2ff'
+                        : '#ffffff',
                       color: isPaid ? '#475569' : '#0f172a',
                       borderBottom: '1px solid #e2e8f0',
                       transition: 'background 0.2s'
@@ -867,18 +958,29 @@ export default function ManufacturerLedger({
                     {!isEditing ? (
                       <>
                         <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                          <input
-                            type="checkbox"
-                            checked={isPaid}
-                            onChange={(e) => handleRowChange(row.id, 'isPaid', e.target.checked)}
-                            style={{
-                              width: '18px',
-                              height: '18px',
-                              cursor: 'pointer',
-                              accentColor: '#16a34a'
-                            }}
-                            title="Позначити як оплачено"
-                          />
+                          {isPaid ? (
+                            <span
+                              title="Оплачено"
+                              style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}
+                            >
+                              ✓
+                            </span>
+                          ) : (
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) =>
+                                handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
+                              }
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                cursor: 'pointer',
+                                accentColor: '#4f46e5'
+                              }}
+                              title="Вибрати позицію для оплати"
+                            />
+                          )}
                         </td>
                         <td
                           style={{
@@ -944,7 +1046,7 @@ export default function ManufacturerLedger({
                           {qty}
                         </td>
                         <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                          <div>${costUSD}</div>
+                          <div>${rowUSD.toFixed(0)}</div>
                           {patternUAH > 0 && (
                             <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
                               +{patternUAH} лекало
@@ -1025,9 +1127,30 @@ export default function ManufacturerLedger({
                               alignItems: 'center'
                             }}
                           >
-                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}>
-                              ✏️ Редагування позиції #{currentPairNumber}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              {!isPaid && (
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) =>
+                                    handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
+                                  }
+                                  style={{
+                                    width: '18px',
+                                    height: '18px',
+                                    cursor: 'pointer',
+                                    accentColor: '#4f46e5'
+                                  }}
+                                  title="Вибрати позицію для оплати"
+                                />
+                              )}
+                              <span
+                                style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}
+                              >
+                                ✏️ Редагування позиції #{currentPairNumber}
+                              </span>
+                            </div>
+
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                               <button
                                 type="button"
@@ -1067,18 +1190,41 @@ export default function ManufacturerLedger({
                           <div
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: '135px 45px 1fr 60px 100px 80px 100px',
+                              gridTemplateColumns: '95px 45px 1fr 60px 100px 80px 100px',
                               gap: '0.5rem',
                               alignItems: 'center'
                             }}
                           >
-                            <input
-                              type="date"
-                              value={row.isoDate || ''}
-                              onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
+                            {/* Поле вибору дати через календар, яке відображає строго ДД.ММ */}
+                            <div
                               className="input-field"
-                              style={{ fontSize: '0.8rem', padding: '0.25rem' }}
-                            />
+                              style={{
+                                position: 'relative',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                fontSize: '0.8rem',
+                                fontWeight: '700',
+                                padding: '0.25rem 0.5rem',
+                                background: '#fff',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <span>{displayDate}</span>
+                              <span style={{ fontSize: '0.75rem' }}>📅</span>
+                              <input
+                                type="date"
+                                value={row.isoDate || ''}
+                                onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
+                                style={{
+                                  position: 'absolute',
+                                  inset: 0,
+                                  opacity: 0,
+                                  cursor: 'pointer',
+                                  width: '100%'
+                                }}
+                              />
+                            </div>
 
                             <div
                               onClick={() => setActiveRowForPicker(row.id)}
@@ -1184,7 +1330,7 @@ export default function ManufacturerLedger({
               })}
             </tbody>
 
-            {/* РЯДОК ПІДСУМКІВ */}
+            {/* ПІДСУМОК: СУМА $ ВИБРАНИХ * КУРС + ЛЕКАЛА ВИБРАНИХ */}
             <tfoot>
               <tr
                 style={{
@@ -1202,7 +1348,7 @@ export default function ManufacturerLedger({
                     whiteSpace: 'nowrap'
                   }}
                 >
-                  {totalPairs} шт
+                  {hasSelectedItems ? `${selectedPairs} шт` : `${totalPairs} шт`}
                 </td>
                 <td
                   colSpan="2"
@@ -1213,27 +1359,44 @@ export default function ManufacturerLedger({
                     fontSize: '0.8rem'
                   }}
                 >
-                  РАЗОМ:
+                  {hasSelectedItems ? 'РАЗОМ (ВИБРАНЕ):' : 'РАЗОМ:'}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', color: '#0f172a' }}>
-                  <div>${totalUSD.toFixed(2)}</div>
-                  {totalPatternsUAH > 0 && (
+                  <div>
+                    $
+                    {hasSelectedItems
+                      ? selectedUSD.toFixed(2)
+                      : totalUSD.toFixed(2)}
+                  </div>
+                  {(hasSelectedItems ? selectedPatternsUAH : totalPatternsUAH) > 0 && (
                     <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
-                      + {totalPatternsUAH.toFixed(0)} грн лекала
+                      +{' '}
+                      {(hasSelectedItems
+                        ? selectedPatternsUAH
+                        : totalPatternsUAH
+                      ).toFixed(0)}{' '}
+                      грн лекала
                     </div>
                   )}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', fontSize: '0.95rem' }}>
-                  <div style={{ color: unpaidUAH === 0 ? '#16a34a' : '#dc2626' }}>
-                    {totalUAH.toFixed(0)} грн
+                  <div
+                    onClick={() => hasSelectedItems && handlePaySelectionOrUnpaid(true)}
+                    style={{
+                      color: hasSelectedItems
+                        ? '#4f46e5'
+                        : unpaidUAH === 0
+                        ? '#16a34a'
+                        : '#dc2626',
+                      cursor: hasSelectedItems ? 'pointer' : 'default'
+                    }}
+                  >
+                    {hasSelectedItems
+                      ? `${selectedTotalUAH.toFixed(0)} грн`
+                      : `${totalUAH.toFixed(0)} грн`}
                   </div>
-                  {paidUAH > 0 && (
-                    <div style={{ fontSize: '0.72rem', color: '#15803d', fontWeight: '700' }}>
-                      (оплачено {paidUAH.toFixed(0)})
-                    </div>
-                  )}
                 </td>
                 <td></td>
               </tr>
@@ -1241,7 +1404,7 @@ export default function ManufacturerLedger({
           </table>
         </div>
 
-        {/* ЗАГАЛЬНА СУМА ТА КНОПКИ КЕРУВАННЯ ЗНИЗУ */}
+        {/* ЗАГАЛЬНА СУМА ТА КНОПКА ОПЛАТИ ЗНИЗУ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1276,9 +1439,10 @@ export default function ManufacturerLedger({
 
             <button
               type="button"
-              onClick={handlePayUnpaidInMonth}
+              onClick={() => handlePaySelectionOrUnpaid(false)}
               style={{
-                background: unpaidUAH === 0 ? '#16a34a' : '#4f46e5',
+                background:
+                  !hasSelectedItems && unpaidUAH === 0 ? '#16a34a' : '#4f46e5',
                 color: '#ffffff',
                 border: 'none',
                 padding: '0.55rem 1.25rem',
@@ -1289,7 +1453,9 @@ export default function ManufacturerLedger({
                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
               }}
             >
-              {unpaidUAH === 0
+              {hasSelectedItems
+                ? `${buttonAmount.toFixed(0)} грн • Оплатити вибране`
+                : unpaidUAH === 0
                 ? `${totalUAH.toFixed(0)} грн ✓ (оплачено)`
                 : `${unpaidUAH.toFixed(0)} грн • Оплатити`}
             </button>
@@ -1353,7 +1519,7 @@ export default function ManufacturerLedger({
               borderRadius: '0.5rem'
             }}
           >
-            Ще немає оплачених позицій. Поставте галочку зліва у будь-якому рядку вище.
+            Ще немає оплачених позицій. Поставте галочку зліва та натисніть оплату.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
@@ -1379,7 +1545,7 @@ export default function ManufacturerLedger({
                 }}
               >
                 <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#374151' }}>
-                  📅 {chk.date} — <strong>{chk.totalSum.toFixed(0)} грн</strong> (оплачено)
+                  {chk.date} — <strong>{chk.totalSum.toFixed(0)} грн</strong> (оплачено)
                 </div>
                 <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#16a34a' }}>
                   Перейти до партії ↑
