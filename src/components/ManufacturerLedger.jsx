@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 export default function ManufacturerLedger({ 
   manufacturerName, 
@@ -11,22 +11,23 @@ export default function ManufacturerLedger({
   setExchangeRate, 
   initialDebt, 
   setInitialDebt,
-  shoesCatalog = [] // Приймаємо загальний каталог
+  shoesCatalog = [] 
 }) {
   
-  // Фільтруємо моделі спеціально для цього виробника
   const manufacturerShoes = shoesCatalog.filter(shoe => (shoe.manufacturer || 'Міла') === manufacturerName);
-  const defaultShoe = manufacturerShoes[0] || shoesCatalog[0] || { id: 'default', name: 'Модель', defaultCostUSD: 0 };
 
   const handleAddRow = () => {
     setRows([...rows, { 
       id: Date.now(), 
       type: 'item', 
       date: '', 
-      shoeId: defaultShoe.id, 
+      shoeId: '',         
+      customName: '',     
       quantity: 1, 
-      customCostUSD: defaultShoe.defaultCostUSD,
-      patternCostUAH: 0 
+      customCostUSD: '',  
+      patternCostUAH: 0,
+      rowRate: exchangeRate || 45.0, // Індивідуальний курс для рядка за замовчуванням з шапки
+      photo: ''           
     }]);
   };
 
@@ -44,9 +45,14 @@ export default function ManufacturerLedger({
     setRows(rows.map(row => {
       if (row.id === id) {
         const updated = { ...row, [field]: value };
-        if (field === 'shoeId') {
+        
+        if (field === 'shoeId' && value) {
           const found = shoesCatalog.find(s => s.id === value);
-          if (found) updated.customCostUSD = found.defaultCostUSD;
+          if (found) {
+            updated.customName = found.name;
+            updated.customCostUSD = found.defaultCostUSD;
+            updated.photo = found.photo || '';
+          }
         }
         return updated;
       }
@@ -67,9 +73,10 @@ export default function ManufacturerLedger({
       const qty = Number(row.quantity) || 0;
       const costUSD = Number(row.customCostUSD) || 0;
       const patternUAH = Number(row.patternCostUAH) || 0;
+      const rRate = Number(row.rowRate) || 0;
 
       totalPairs += qty;
-      const uah = (qty * costUSD * Number(exchangeRate)) + patternUAH;
+      const uah = (qty * costUSD * rRate) + patternUAH;
       totalUSD += qty * costUSD;
       totalUAH += uah;
     } else if (row.type === 'subtotal') {
@@ -121,17 +128,6 @@ export default function ManufacturerLedger({
                 </div>
               </>
             )}
-            <div>
-              <span style={{ display: 'block', fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', marginBottom: '0.3rem' }}>Курс ($):</span>
-              <input 
-                type="number" 
-                step="0.1" 
-                value={exchangeRate} 
-                onChange={(e) => setExchangeRate(Number(e.target.value))}
-                className="input-field"
-                style={{ fontWeight: 'bold', textAlign: 'right' }}
-              />
-            </div>
             <div style={{ background: '#f5f3ff', padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #ede9fe', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4f46e5' }}>
                 {paymentMode === 'prepaid' ? 'Залишок від авансу:' : 'До сплати загалом:'}
@@ -148,15 +144,15 @@ export default function ManufacturerLedger({
           <table className="table-custom">
             <thead>
               <tr>
-                <th style={{ width: '50px', textAlign: 'center' }}>№</th>
-                <th style={{ width: '100px' }}>Дата</th>
+                <th style={{ width: '40px', textAlign: 'center' }}>№</th>
+                <th style={{ width: '90px' }}>Дата</th>
                 <th>Фото + Назва пари</th>
-                <th style={{ width: '75px', textAlign: 'center' }}>К-ть</th>
-                <th style={{ width: '95px', textAlign: 'right' }}>Ціна ($)</th>
-                <th style={{ width: '95px', textAlign: 'right' }}>Лекало (грн)</th>
-                <th style={{ width: '80px', textAlign: 'right' }}>Курс</th>
-                <th style={{ width: '130px', textAlign: 'right' }}>Сума (грн)</th>
-                <th style={{ width: '50px', textAlign: 'center' }}></th>
+                <th style={{ width: '65px', textAlign: 'center' }}>К-ть</th>
+                <th style={{ width: '90px', textAlign: 'right' }}>Ціна ($)</th>
+                <th style={{ width: '90px', textAlign: 'right' }}>Лекало (грн)</th>
+                <th style={{ width: '90px', textAlign: 'right' }}>Курс</th>
+                <th style={{ width: '120px', textAlign: 'right' }}>Сума (грн)</th>
+                <th style={{ width: '40px', textAlign: 'center' }}></th>
               </tr>
             </thead>
             <tbody>
@@ -195,7 +191,7 @@ export default function ManufacturerLedger({
                             type="number" 
                             value={row.manualSumUAH !== undefined ? row.manualSumUAH : 0} 
                             onChange={(e) => handleRowChange(row.id, 'manualSumUAH', Number(e.target.value))}
-                            style={{ width: '95px', padding: '0.3rem', border: '2px solid #f59e0b', borderRadius: '0.3rem', fontWeight: '900', color: '#92400e', textAlign: 'right', background: '#fff' }}
+                            style={{ width: '90px', padding: '0.3rem', border: '2px solid #f59e0b', borderRadius: '0.3rem', fontWeight: '900', color: '#92400e', textAlign: 'right', background: '#fff' }}
                           />
                           <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#92400e' }}>грн</span>
                         </div>
@@ -208,13 +204,13 @@ export default function ManufacturerLedger({
                   );
                 }
 
-                const selectedShoe = shoesCatalog.find(s => s.id === row.shoeId) || defaultShoe;
                 const qty = Number(row.quantity) || 0;
                 const costUSD = Number(row.customCostUSD) || 0;
                 const patternUAH = Number(row.patternCostUAH) || 0;
+                const rRate = Number(row.rowRate) || 0;
 
                 const rowTotalUSD = qty * costUSD;
-                const rowTotalUAH = (rowTotalUSD * Number(exchangeRate)) + patternUAH;
+                const rowTotalUAH = (rowTotalUSD * rRate) + patternUAH;
 
                 return (
                   <tr key={row.id}>
@@ -232,22 +228,36 @@ export default function ManufacturerLedger({
 
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        {selectedShoe.photo ? (
-                          <img src={selectedShoe.photo} alt="" style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb', flexShrink: 0 }} />
-                        ) : (
-                          <div style={{ width: '40px', height: '40px', borderRadius: '0.5rem', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: '#6b7280', flexShrink: 0 }}>фото</div>
-                        )}
-                        <select 
-                          value={row.shoeId} 
-                          onChange={(e) => handleRowChange(row.id, 'shoeId', e.target.value)}
-                          className="input-field"
-                          style={{ fontWeight: '500' }}
-                        >
-                          {/* Показуємо тільки моделі цього виробника */}
-                          {manufacturerShoes.map(shoe => (
-                            <option key={shoe.id} value={shoe.id}>{shoe.name}</option>
-                          ))}
-                        </select>
+                        <div style={{ position: 'relative', width: '40px', height: '40px', flexShrink: '0' }}>
+                          {row.photo ? (
+                            <img src={row.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb' }} />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', borderRadius: '0.5rem', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.55rem', color: '#6b7280' }}>фото</div>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', flex: 1 }}>
+                          <select 
+                            value={row.shoeId || ''} 
+                            onChange={(e) => handleRowChange(row.id, 'shoeId', e.target.value)}
+                            className="input-field"
+                            style={{ fontWeight: '600', fontSize: '0.85rem' }}
+                          >
+                            <option value="">-- Вибрати з каталогу --</option>
+                            {manufacturerShoes.map(shoe => (
+                              <option key={shoe.id} value={shoe.id}>{shoe.name} ({shoe.id || 'без арт.'})</option>
+                            ))}
+                          </select>
+
+                          <input 
+                            type="text" 
+                            placeholder="Або введіть назву вручну"
+                            value={row.customName || ''}
+                            onChange={(e) => handleRowChange(row.id, 'customName', e.target.value)}
+                            className="input-field"
+                            style={{ fontSize: '0.8rem', padding: '0.2rem 0.4rem' }}
+                          />
+                        </div>
                       </div>
                     </td>
 
@@ -265,6 +275,8 @@ export default function ManufacturerLedger({
                     <td style={{ textAlign: 'right' }}>
                       <input 
                         type="number" 
+                        step="0.01"
+                        placeholder="0"
                         value={row.customCostUSD} 
                         onChange={(e) => handleRowChange(row.id, 'customCostUSD', Number(e.target.value))}
                         className="input-field"
@@ -283,8 +295,16 @@ export default function ManufacturerLedger({
                       />
                     </td>
 
-                    <td style={{ textAlign: 'right', fontWeight: '600', color: '#6b7280' }}>
-                      {exchangeRate}
+                    {/* Індивідуальний курс для кожного рядка */}
+                    <td style={{ textAlign: 'right' }}>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={row.rowRate !== undefined ? row.rowRate : ''} 
+                        onChange={(e) => handleRowChange(row.id, 'rowRate', Number(e.target.value))}
+                        className="input-field"
+                        style={{ textAlign: 'right', fontWeight: 'bold', color: '#4f46e5' }}
+                      />
                     </td>
 
                     <td style={{ textAlign: 'right', fontWeight: '700', color: '#111827' }}>
