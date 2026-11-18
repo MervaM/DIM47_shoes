@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ManufacturerLedger from './ManufacturerLedger';
 import SummaryView from './SummaryView';
+import ShoesCardsView from './ShoesCardsView';
 import { supabase } from '../supabaseClient';
 
 const DEFAULT_STATE = {
@@ -23,7 +24,7 @@ const DEFAULT_STATE = {
 export default function MonthView() {
   const [activeTab, setActiveTab] = useState('summary');
   const [isLoading, setIsLoading] = useState(true);
-  const [syncStatus, setSyncStatus] = useState('saved'); // 'loading' | 'saving' | 'saved' | 'error'
+  const [syncStatus, setSyncStatus] = useState('saved');
 
   // Стани даних
   const [milaDeposit, setMilaDeposit] = useState(DEFAULT_STATE.milaDeposit);
@@ -36,7 +37,6 @@ export default function MonthView() {
 
   const [expenses, setExpenses] = useState(DEFAULT_STATE.expenses);
 
-  // Прапорець, щоб не перезаписувати базу одразу під час першого завантаження чи отримання змін від колег
   const isRemoteUpdate = useRef(false);
 
   const applyDataToState = (data) => {
@@ -51,7 +51,6 @@ export default function MonthView() {
     if (data.expenses !== undefined) setExpenses(data.expenses);
   };
 
-  // 1. Завантаження початкових даних з Supabase + підписка на зміни колег у реальному часі
   useEffect(() => {
     async function loadInitialData() {
       setSyncStatus('loading');
@@ -68,7 +67,6 @@ export default function MonthView() {
         applyDataToState(data.data);
         setSyncStatus('saved');
       } else {
-        // Якщо запису з id = 1 ще немає в базі — створюємо його з початковими даними
         await supabase.from('app_state').insert([{ id: 1, data: DEFAULT_STATE }]);
         setSyncStatus('saved');
       }
@@ -77,7 +75,6 @@ export default function MonthView() {
 
     loadInitialData();
 
-    // Підписка на оновлення від інших користувачів
     const channel = supabase
       .channel('app_state_changes')
       .on(
@@ -97,7 +94,6 @@ export default function MonthView() {
     };
   }, []);
 
-  // 2. Автоматичне збереження змін у Supabase (із затримкою 600 мс після останнього натискання)
   useEffect(() => {
     if (isLoading) return;
 
@@ -154,7 +150,6 @@ export default function MonthView() {
             </h1>
           </div>
 
-          {/* Індикатор синхронізації */}
           <div style={{ fontSize: '0.75rem', fontWeight: '600', padding: '0.35rem 0.75rem', borderRadius: '9999px', background: syncStatus === 'error' ? '#fef2f2' : '#f3f4f6', color: syncStatus === 'error' ? '#dc2626' : '#4b5563' }}>
             {syncStatus === 'loading' && '⏳ Синхронізація...'}
             {syncStatus === 'saving' && '💾 Збереження...'}
@@ -182,6 +177,12 @@ export default function MonthView() {
             className={`tab-btn ${activeTab === 'valera' ? 'active' : ''}`}
           >
             Валерій (Після видачі)
+          </button>
+          <button 
+            onClick={() => setActiveTab('catalog')}
+            className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}
+          >
+            👟 Каталог взуття
           </button>
         </div>
       </div>
@@ -221,6 +222,10 @@ export default function MonthView() {
           exchangeRate={valeraRate}
           setExchangeRate={setValeraRate}
         />
+      )}
+
+      {activeTab === 'catalog' && (
+        <ShoesCardsView exchangeRate={milaRate} />
       )}
     </div>
   );

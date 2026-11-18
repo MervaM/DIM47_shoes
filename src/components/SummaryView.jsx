@@ -1,5 +1,4 @@
 import React from 'react';
-import { shoesCatalog } from '../data/shoesCatalog';
 
 const EXPENSE_CATEGORIES = [
   'Реклама',
@@ -16,7 +15,6 @@ export default function SummaryView({ milaRows, valeraRows, milaRate, valeraRate
     let pairs = 0;
     let uah = 0;
     let usd = 0;
-    const modelCounts = {};
 
     rows.forEach(row => {
       if (row.type === 'item') {
@@ -25,12 +23,10 @@ export default function SummaryView({ milaRows, valeraRows, milaRate, valeraRate
         pairs += qty;
         usd += qty * costUSD;
         uah += qty * costUSD * Number(rate);
-
-        modelCounts[row.shoeId] = (modelCounts[row.shoeId] || 0) + qty;
       }
     });
 
-    return { pairs, uah, usd, modelCounts };
+    return { pairs, uah, usd };
   };
 
   const milaStats = calculateStats(milaRows, milaRate);
@@ -40,11 +36,9 @@ export default function SummaryView({ milaRows, valeraRows, milaRate, valeraRate
   const productionUAH = milaStats.uah + valeraStats.uah;
   const productionUSD = milaStats.usd + valeraStats.usd;
 
-  // Підрахунок додаткових витрат
   const extraExpensesUAH = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const grandTotalUAH = productionUAH + extraExpensesUAH;
 
-  // Управління рядками витрат
   const handleAddExpense = () => {
     setExpenses([
       ...expenses,
@@ -69,7 +63,7 @@ export default function SummaryView({ milaRows, valeraRows, milaRate, valeraRate
           📊 Зведена фінансова картина місяця
         </h2>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
           
           <div style={{ background: '#eef2ff', padding: '1.25rem', borderRadius: '1rem', border: '1px solid #e0e7ff' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4f46e5', textTransform: 'uppercase' }}>Виготовлено пар</span>
@@ -95,30 +89,6 @@ export default function SummaryView({ milaRows, valeraRows, milaRate, valeraRate
             <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Виробництво + Дод. витрати</div>
           </div>
 
-        </div>
-
-        {/* Статистика по моделях */}
-        <h3 style={{ fontSize: '1.125rem', fontWeight: '700', color: '#111827', marginBottom: '1rem' }}>
-          Розподіл виробництва по моделях
-        </h3>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '1rem' }}>
-          {shoesCatalog.map(shoe => {
-            const countMila = milaStats.modelCounts[shoe.id] || 0;
-            const countValera = valeraStats.modelCounts[shoe.id] || 0;
-            const totalShoeCount = countMila + countValera;
-
-            return (
-              <div key={shoe.id} style={{ background: '#f9fafb', padding: '0.875rem', borderRadius: '0.75rem', border: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
-                <img src={shoe.photo} alt="" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '0.5rem', background: '#ffffff', border: '1px solid #e5e7eb', flexShrink: 0 }} />
-                <div>
-                  <h4 style={{ fontSize: '0.875rem', fontWeight: 'bold', color: '#111827', margin: 0 }}>{shoe.name}</h4>
-                  <p style={{ fontSize: '1rem', fontWeight: '800', color: '#4f46e5', margin: '0.15rem 0' }}>{totalShoeCount} пар</p>
-                  <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: 0 }}>Міла: {countMila} | Вал: {countValera}</p>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 
