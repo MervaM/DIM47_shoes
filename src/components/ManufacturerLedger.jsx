@@ -215,7 +215,9 @@ export default function ManufacturerLedger(props) {
     onUpdateExternalRow = null,
     depositsList = [],
     setDepositsList = () => {},
-    carriedAdvanceFromPrev = 0,
+    onClearAllAdvances = null,
+    manualRemaining = null,
+    setManualRemaining = () => {},
     carriedDebtFromPrev = 0,
     exchangeRate = 45.0,
     shoesCatalog = []
@@ -240,8 +242,16 @@ export default function ManufacturerLedger(props) {
   const [newDepositDay, setNewDepositDay] = useState('01');
   const [newDepositMonth, setNewDepositMonth] = useState(activeMM);
   const [newDepositAmount, setNewDepositAmount] = useState('');
-  const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
 
+  const [editingDepositId, setEditingDepositId] = useState(null);
+  const [editingDepositDay, setEditingDepositDay] = useState('01');
+  const [editingDepositMonth, setEditingDepositMonth] = useState(activeMM);
+  const [editingDepositAmount, setEditingDepositAmount] = useState('');
+
+  const [isEditingRemaining, setIsEditingRemaining] = useState(false);
+  const [remainingDraftValue, setRemainingDraftValue] = useState('');
+
+  const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
   const [paymentDay, setPaymentDay] = useState('01');
@@ -254,6 +264,8 @@ export default function ManufacturerLedger(props) {
     const safeMM = mm || '08';
     setNewDepositDay('01');
     setNewDepositMonth(safeMM);
+    setEditingDepositId(null);
+    setIsEditingRemaining(false);
     setActivatedSubtotalId(null);
     setPaymentDay('01');
     setPaymentMonthMM(safeMM);
@@ -262,8 +274,6 @@ export default function ManufacturerLedger(props) {
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
-
-  const carriedAdvanceBalance = Math.max(0, Number(carriedAdvanceFromPrev) || 0);
 
   const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
@@ -375,8 +385,50 @@ export default function ManufacturerLedger(props) {
     setNewDepositAmount('');
   };
 
+  const startEditDeposit = (dep) => {
+    const { dd, mm } = splitDM(dep.date || formatDayMonth(dep.isoDate), activeMonth);
+    setEditingDepositId(dep.id);
+    setEditingDepositDay(dd);
+    setEditingDepositMonth(mm);
+    setEditingDepositAmount(String(dep.amount ?? ''));
+  };
+
+  const saveEditDeposit = (id) => {
+    const numericAmount = Number(editingDepositAmount);
+    if (Number.isNaN(numericAmount) || numericAmount < 0) return;
+
+    const formattedDM = `${editingDepositDay}.${editingDepositMonth}`;
+    const chosenISO = `${resolvedYear}-${editingDepositMonth}-${editingDepositDay}`;
+    const depMonth = `${resolvedYear}-${editingDepositMonth}`;
+
+    setDepositsList(
+      depositsList.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              date: formattedDM,
+              isoDate: chosenISO,
+              month: depMonth,
+              amount: numericAmount
+            }
+          : d
+      )
+    );
+    setEditingDepositId(null);
+  };
+
   const handleDeleteDeposit = (id) => {
+    if (editingDepositId === id) setEditingDepositId(null);
     setDepositsList(depositsList.filter((d) => d.id !== id));
+  };
+
+  const handleClearMonthAdvances = async () => {
+    setEditingDepositId(null);
+    setDepositsList([]);
+    setManualRemaining(null);
+    if (onClearAllAdvances) {
+      await onClearAllAdvances();
+    }
   };
 
   const handleRowChange = (id, field, value) => {
@@ -533,9 +585,17 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  const monthDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  const totalAvailableAdvanceUAH = carriedAdvanceBalance + monthDepositsSum;
-  const remainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
+  const totalAvailableAdvanceUAH = monthDeposits.reduce(
+    (sum, d) => sum + (Number(d.amount) || 0),
+    0
+  );
+  const autoRemainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
+  const hasManualRemaining =
+    manualRemaining !== null && manualRemaining !== undefined && !Number.isNaN(Number(manualRemaining));
+  const displayedRemainingUAH = hasManualRemaining
+    ? Number(manualRemaining)
+    : autoRemainingAdvanceUAH;
+
   const totalDebtWithCarryUAH = unpaidUAH + (Number(carriedDebtFromPrev) || 0);
 
   const hasCheckedPairs = checkedPairs > 0;
@@ -626,6 +686,10 @@ export default function ManufacturerLedger(props) {
           });
         }
       });
+    }
+
+    if (chosenSource === 'advance' && hasManualRemaining) {
+      setManualRemaining(Number(manualRemaining) - finalAmountUAH);
     }
 
     if (activatedSubtotalId) {
@@ -907,25 +971,28 @@ export default function ManufacturerLedger(props) {
                   gap: '0.45rem'
                 }}
               >
-                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
-                  💰 Аванси ({activeMonth}):
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
+                    💰 Аванси ({activeMonth}):
+                  </span>
 
-                {carriedAdvanceBalance > 0 && (
-                  <div
+                  <button
+                    type="button"
+                    onClick={handleClearMonthAdvances}
                     style={{
-                      fontSize: '0.72rem',
-                      background: '#f0fdf4',
-                      color: '#15803d',
-                      padding: '0.25rem 0.45rem',
+                      background: '#fef2f2',
+                      color: '#dc2626',
+                      border: '1px solid #fecaca',
                       borderRadius: '0.35rem',
-                      fontWeight: '700'
+                      padding: '0.15rem 0.45rem',
+                      fontSize: '0.68rem',
+                      fontWeight: '700',
+                      cursor: 'pointer'
                     }}
                   >
-                    Перенесено з минулих місяців:{' '}
-                    <strong>{carriedAdvanceBalance.toFixed(0)} грн</strong>
-                  </div>
-                )}
+                    Очистити всі аванси
+                  </button>
+                </div>
 
                 <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select
@@ -1008,43 +1075,149 @@ export default function ManufacturerLedger(props) {
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '0.2rem',
-                      maxHeight: '85px',
+                      gap: '0.25rem',
+                      maxHeight: '115px',
                       overflowY: 'auto',
                       marginTop: '0.15rem'
                     }}
                   >
-                    {monthDeposits.map((dep) => (
-                      <div
-                        key={dep.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          fontSize: '0.75rem',
-                          background: '#f0fdf4',
-                          padding: '0.2rem 0.4rem',
-                          borderRadius: '0.3rem'
-                        }}
-                      >
-                        <span>
-                          {dep.date || formatDayMonth(dep.isoDate)}: <strong>{dep.amount} грн</strong>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteDeposit(dep.id)}
+                    {monthDeposits.map((dep) => {
+                      const isEditingThis = editingDepositId === dep.id;
+                      if (isEditingThis) {
+                        return (
+                          <div
+                            key={dep.id}
+                            style={{
+                              display: 'flex',
+                              gap: '0.25rem',
+                              alignItems: 'center',
+                              background: '#fefce8',
+                              border: '1px solid #fde047',
+                              padding: '0.22rem 0.35rem',
+                              borderRadius: '0.3rem',
+                              flexWrap: 'wrap'
+                            }}
+                          >
+                            <select
+                              value={editingDepositDay}
+                              onChange={(e) => setEditingDepositDay(e.target.value)}
+                              style={{ padding: '0.15rem', fontSize: '0.72rem', borderRadius: '0.25rem', border: '1px solid #cbd5e1' }}
+                            >
+                              {DAYS_IN_MONTH_LIST.map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                              ))}
+                            </select>
+                            <select
+                              value={editingDepositMonth}
+                              onChange={(e) => setEditingDepositMonth(e.target.value)}
+                              style={{ padding: '0.15rem', fontSize: '0.72rem', borderRadius: '0.25rem', border: '1px solid #cbd5e1' }}
+                            >
+                              {MONTH_OPTIONS_UKR.map((m) => (
+                                <option key={m.mm} value={m.mm}>{m.mm}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="number"
+                              value={editingDepositAmount}
+                              onChange={(e) => setEditingDepositAmount(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  saveEditDeposit(dep.id);
+                                }
+                              }}
+                              style={{
+                                width: '72px',
+                                padding: '0.15rem 0.3rem',
+                                fontSize: '0.74rem',
+                                fontWeight: 'bold',
+                                border: '1px solid #cbd5e1',
+                                borderRadius: '0.25rem'
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => saveEditDeposit(dep.id)}
+                              style={{
+                                background: '#16a34a',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '0.25rem',
+                                padding: '0.15rem 0.4rem',
+                                fontSize: '0.72rem',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✓
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDepositId(null)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#6b7280',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={dep.id}
                           style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#dc2626',
-                            cursor: 'pointer',
-                            fontWeight: 'bold'
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            fontSize: '0.75rem',
+                            background: '#f0fdf4',
+                            padding: '0.22rem 0.4rem',
+                            borderRadius: '0.3rem'
                           }}
                         >
-                          ×
-                        </button>
-                      </div>
-                    ))}
+                          <span>
+                            {dep.date || formatDayMonth(dep.isoDate)}: <strong>{dep.amount} грн</strong>
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <button
+                              type="button"
+                              onClick={() => startEditDeposit(dep)}
+                              title="Редагувати аванс"
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#4f46e5',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '0.78rem'
+                              }}
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDeposit(dep.id)}
+                              title="Видалити аванс"
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#dc2626',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1095,34 +1268,155 @@ export default function ManufacturerLedger(props) {
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
-                gap: '0.2rem'
+                gap: '0.3rem'
               }}
             >
-              <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
-                {totalAvailableAdvanceUAH > 0 ? 'Залишок авансу:' : 'Борг / Неоплачено:'}
-              </span>
-              <span
-                style={{
-                  fontSize: '1.1rem',
-                  fontWeight: '900',
-                  color:
-                    totalAvailableAdvanceUAH > 0
-                      ? remainingAdvanceUAH < 0
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.35rem' }}>
+                <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
+                  {paymentMode === 'prepaid' ? 'Залишок авансу:' : 'Борг / Неоплачено:'}
+                </span>
+
+                {paymentMode === 'prepaid' && !isEditingRemaining && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemainingDraftValue(String(Math.round(displayedRemainingUAH)));
+                      setIsEditingRemaining(true);
+                    }}
+                    style={{
+                      background: '#eef2ff',
+                      color: '#4f46e5',
+                      border: '1px solid #c7d2fe',
+                      borderRadius: '0.3rem',
+                      padding: '0.12rem 0.4rem',
+                      fontSize: '0.68rem',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✎ Редагувати
+                  </button>
+                )}
+              </div>
+
+              {paymentMode === 'prepaid' && isEditingRemaining ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <input
+                    type="number"
+                    value={remainingDraftValue}
+                    onChange={(e) => setRemainingDraftValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const num = Number(remainingDraftValue);
+                        if (!Number.isNaN(num)) {
+                          setManualRemaining(num);
+                          setIsEditingRemaining(false);
+                        }
+                      }
+                    }}
+                    style={{
+                      width: '105px',
+                      padding: '0.25rem 0.4rem',
+                      borderRadius: '0.35rem',
+                      border: '2px solid #4f46e5',
+                      fontWeight: '900',
+                      fontSize: '0.95rem',
+                      color: '#312e81',
+                      background: '#ffffff'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const num = Number(remainingDraftValue);
+                      if (!Number.isNaN(num)) {
+                        setManualRemaining(num);
+                        setIsEditingRemaining(false);
+                      }
+                    }}
+                    style={{
+                      background: '#16a34a',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '0.35rem',
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Зберегти
+                  </button>
+                  {hasManualRemaining && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualRemaining(null);
+                        setIsEditingRemaining(false);
+                      }}
+                      style={{
+                        background: '#f3f4f6',
+                        color: '#4b5563',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.35rem',
+                        padding: '0.25rem 0.45rem',
+                        fontSize: '0.72rem',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Авто
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <span
+                  style={{
+                    fontSize: '1.1rem',
+                    fontWeight: '900',
+                    color:
+                      paymentMode === 'prepaid'
+                        ? displayedRemainingUAH < 0
+                          ? '#dc2626'
+                          : '#312e81'
+                        : totalDebtWithCarryUAH > 0
                         ? '#dc2626'
                         : '#312e81'
-                      : totalDebtWithCarryUAH > 0
-                      ? '#dc2626'
-                      : '#312e81'
-                }}
-              >
-                {totalAvailableAdvanceUAH > 0
-                  ? `${remainingAdvanceUAH.toFixed(0)} грн`
-                  : `${totalDebtWithCarryUAH.toFixed(0)} грн`}
-              </span>
-              {totalAvailableAdvanceUAH > 0 && (
-                <span style={{ fontSize: '0.68rem', color: '#6366f1', fontWeight: '700' }}>
-                  {totalAvailableAdvanceUAH.toFixed(0)} грн − {paidFromAdvanceUAH.toFixed(0)} грн (з авансу)
+                  }}
+                >
+                  {paymentMode === 'prepaid'
+                    ? `${displayedRemainingUAH.toFixed(0)} грн`
+                    : `${totalDebtWithCarryUAH.toFixed(0)} грн`}
                 </span>
+              )}
+
+              {paymentMode === 'prepaid' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ fontSize: '0.68rem', color: '#6366f1', fontWeight: '700' }}>
+                    {hasManualRemaining
+                      ? `Задано вручну (авто: ${autoRemainingAdvanceUAH.toFixed(0)} грн)`
+                      : `${totalAvailableAdvanceUAH.toFixed(0)} грн − ${paidFromAdvanceUAH.toFixed(0)} грн (з авансу)`}
+                  </span>
+                  {hasManualRemaining && !isEditingRemaining && (
+                    <button
+                      type="button"
+                      onClick={() => setManualRemaining(null)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#6366f1',
+                        textDecoration: 'underline',
+                        fontSize: '0.66rem',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        padding: 0
+                      }}
+                    >
+                      Скинути
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>

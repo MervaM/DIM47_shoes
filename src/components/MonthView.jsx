@@ -9,20 +9,9 @@ const MONTHS_UKR = [
   'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'
 ];
 
-function getDepositsForMonth(monthData, monthKey, monthIndex) {
+function getDepositsForMonth(monthData) {
   if (Array.isArray(monthData?.milaDepositsList)) {
     return monthData.milaDepositsList;
-  }
-  if (Number(monthData?.milaDeposit) > 0) {
-    return [
-      {
-        id: `legacy_${monthKey}`,
-        isoDate: `${monthKey}-01`,
-        month: monthKey,
-        date: `01.${String(monthIndex + 1).padStart(2, '0')}`,
-        amount: Number(monthData.milaDeposit)
-      }
-    ];
   }
   return [];
 }
@@ -68,60 +57,6 @@ function getRowPaidMonth(row, fallbackMonthKey) {
   return getRowOrderMonth(row, fallbackMonthKey);
 }
 
-/**
- * Послідовний розрахунок залишку авансу по всіх місяцях до targetMonthKey
- */
-function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
-  const keysSet = new Set(Object.keys(allMonthsMap || {}));
-  const [targetYearStr, targetMonthStr] = targetMonthKey.split('-');
-  const targetYear = Number(targetYearStr) || 2026;
-  const targetMonthNum = Number(targetMonthStr) || 1;
-
-  for (let m = 1; m < targetMonthNum; m++) {
-    keysSet.add(`${targetYear}-${String(m).padStart(2, '0')}`);
-  }
-
-  const orderedPrevKeys = Array.from(keysSet)
-    .filter((k) => k < targetMonthKey)
-    .sort();
-
-  let runningAdvance = 0;
-
-  orderedPrevKeys.forEach((key) => {
-    const mData = allMonthsMap?.[key] || {};
-    const parts = key.split('-');
-    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
-
-    const mDeposits = getDepositsForMonth(mData, key, mIdx);
-    const monthDepositsSum = mDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-    let monthPaidFromAdvanceUAH = 0;
-
-    Object.keys(allMonthsMap || {}).forEach((sourceKey) => {
-      const sourceData = allMonthsMap[sourceKey] || {};
-      const rows = Array.isArray(sourceData.milaRows) ? sourceData.milaRows : [];
-
-      rows.forEach((row) => {
-        if (row.type !== 'item' || row.isEditing || !row.isPaid) return;
-        if (row.paySource === 'separate') return;
-
-        const paidM = getRowPaidMonth(row, sourceKey);
-        if (paidM === key) {
-          const qty = Number(row.quantity) || 0;
-          const costUSD = Number(row.customCostUSD) || 0;
-          const patternUAH = Number(row.patternCostUAH) || 0;
-          const rate = Number(row.rowRate) || Number(sourceData.milaRate) || 45;
-          monthPaidFromAdvanceUAH += qty * costUSD * rate + patternUAH;
-        }
-      });
-    });
-
-    runningAdvance = Math.max(0, runningAdvance + monthDepositsSum - monthPaidFromAdvanceUAH);
-  });
-
-  return runningAdvance;
-}
-
 function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   const seenIds = new Set();
   const result = [];
@@ -143,6 +78,7 @@ function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
 
 function buildMonthPayload({
   milaDepositsList,
+  milaManualRemaining,
   milaInitialDebt,
   milaRate,
   milaRows,
@@ -158,6 +94,10 @@ function buildMonthPayload({
   return {
     milaDepositsList: milaDepositsList || [],
     milaDeposit: depositsTotal,
+    milaManualRemaining:
+      milaManualRemaining !== null && milaManualRemaining !== undefined && milaManualRemaining !== ''
+        ? Number(milaManualRemaining)
+        : null,
     milaInitialDebt: milaInitialDebt ?? 0,
     milaRate: milaRate ?? 45.0,
     milaRows: milaRows || [],
@@ -179,6 +119,7 @@ export default function MonthView() {
   const [allMonthsMap, setAllMonthsMap] = useState({});
 
   const [milaDepositsList, setMilaDepositsList] = useState([]);
+  const [milaManualRemaining, setMilaManualRemaining] = useState(null);
   const [milaInitialDebt, setMilaInitialDebt] = useState(0);
   const [milaRate, setMilaRate] = useState(45.0);
   const [milaRows, setMilaRows] = useState([]);
@@ -203,7 +144,6 @@ export default function MonthView() {
   currentMonthKeyRef.current = monthKey;
   latestCatalogRef.current = shoesCatalog;
 
-  // Черга гарантованого послідовного запису в Supabase без перетирання
   const enqueueSave = useCallback((targetKey, monthObj, overrideCatalog) => {
     if (!targetKey || !monthObj) return Promise.resolve();
 
@@ -260,7 +200,6 @@ export default function MonthView() {
     return task;
   }, []);
 
-  // Миттєвий скид незбережених змін перед перемиканням місяця/вкладки
   const flushPendingChanges = useCallback(async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -272,7 +211,78 @@ export default function MonthView() {
     }
   }, [enqueueSave]);
 
-  // Завантаження місяця (тільки після завершення попередніх записів)
+  const handleClearAllAdvancesEverywhere = async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    isDirtyRef.current = false;
+
+    setMilaDepositsList([]);
+    setMilaManualRemaining(null);
+    setSyncStatus('saving');
+
+    const task = writeQueueRef.current.then(async () => {
+      const { data: existingData, error: readError } = await supabase
+        .from('app_state')
+        .select('data')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (readError) {
+        console.error('Помилка читання при очищенні авансів:', readError);
+        setSyncStatus('error');
+        return;
+      }
+
+      const currentRoot = existingData?.data || {};
+      const rawMonths = currentRoot.months || {};
+      const cleanedMonths = {};
+
+      Object.keys(rawMonths).forEach((k) => {
+        cleanedMonths[k] = {
+          ...rawMonths[k],
+          milaDepositsList: [],
+          milaDeposit: 0,
+          milaManualRemaining: null
+        };
+      });
+
+      cleanedMonths[monthKey] = buildMonthPayload({
+        milaDepositsList: [],
+        milaManualRemaining: null,
+        milaInitialDebt,
+        milaRate,
+        milaRows,
+        valeraRate,
+        valeraRows,
+        expenses
+      });
+
+      const { error: writeError } = await supabase
+        .from('app_state')
+        .upsert({
+          id: 1,
+          data: {
+            ...currentRoot,
+            months: cleanedMonths
+          }
+        });
+
+      if (writeError) {
+        console.error('Помилка очищення авансів:', writeError);
+        setSyncStatus('error');
+      } else {
+        latestPayloadRef.current = cleanedMonths[monthKey];
+        setAllMonthsMap(cleanedMonths);
+        setSyncStatus('saved');
+      }
+    });
+
+    writeQueueRef.current = task.catch(() => {});
+    await task;
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -302,9 +312,14 @@ export default function MonthView() {
       const rootData = data?.data || {};
       const allMonthsData = rootData.months || {};
       const monthData = allMonthsData[monthKey] || {};
-      const mIdx = Math.max(0, Number(monthKey.split('-')[1] || 1) - 1);
 
-      const loadedDeposits = getDepositsForMonth(monthData, monthKey, mIdx);
+      const loadedDeposits = getDepositsForMonth(monthData);
+      const loadedManualRemaining =
+        monthData.milaManualRemaining !== null &&
+        monthData.milaManualRemaining !== undefined &&
+        monthData.milaManualRemaining !== ''
+          ? Number(monthData.milaManualRemaining)
+          : null;
       const loadedInitDebt = monthData.milaInitialDebt ?? 0;
       const loadedMilaRate = monthData.milaRate ?? 45.0;
       const loadedMilaRows = Array.isArray(monthData.milaRows) ? monthData.milaRows : [];
@@ -315,6 +330,7 @@ export default function MonthView() {
 
       setAllMonthsMap(allMonthsData);
       setMilaDepositsList(loadedDeposits);
+      setMilaManualRemaining(loadedManualRemaining);
       setMilaInitialDebt(loadedInitDebt);
       setMilaRate(loadedMilaRate);
       setMilaRows(loadedMilaRows);
@@ -325,6 +341,7 @@ export default function MonthView() {
 
       latestPayloadRef.current = buildMonthPayload({
         milaDepositsList: loadedDeposits,
+        milaManualRemaining: loadedManualRemaining,
         milaInitialDebt: loadedInitDebt,
         milaRate: loadedMilaRate,
         milaRows: loadedMilaRows,
@@ -351,12 +368,12 @@ export default function MonthView() {
     };
   }, [monthKey]);
 
-  // Автозбереження при будь-якій зміні даних у відкритому місяці
   useEffect(() => {
     if (isLoading || !isReadyToSaveRef.current) return;
 
     const payload = buildMonthPayload({
       milaDepositsList,
+      milaManualRemaining,
       milaInitialDebt,
       milaRate,
       milaRows,
@@ -393,6 +410,7 @@ export default function MonthView() {
     };
   }, [
     milaDepositsList,
+    milaManualRemaining,
     milaInitialDebt,
     milaRate,
     milaRows,
@@ -404,7 +422,6 @@ export default function MonthView() {
     enqueueSave
   ]);
 
-  // Збереження при закритті/оновленні сторінки
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (isDirtyRef.current && latestPayloadRef.current && currentMonthKeyRef.current) {
@@ -438,15 +455,18 @@ export default function MonthView() {
     setShoesCatalog((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       latestCatalogRef.current = next;
-      const payloadToKeep = latestPayloadRef.current || buildMonthPayload({
-        milaDepositsList,
-        milaInitialDebt,
-        milaRate,
-        milaRows,
-        valeraRate,
-        valeraRows,
-        expenses
-      });
+      const payloadToKeep =
+        latestPayloadRef.current ||
+        buildMonthPayload({
+          milaDepositsList,
+          milaManualRemaining,
+          milaInitialDebt,
+          milaRate,
+          milaRows,
+          valeraRate,
+          valeraRows,
+          expenses
+        });
       enqueueSave(monthKey, payloadToKeep, next);
       return next;
     });
@@ -475,7 +495,6 @@ export default function MonthView() {
     await enqueueSave(storageMonthKey, nextTargetMonthObj);
   };
 
-  const carriedAdvanceFromPrev = calculateChainedAdvance(allMonthsMap, monthKey);
   const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
   const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
 
@@ -607,7 +626,9 @@ export default function MonthView() {
               }
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
-              carriedAdvanceFromPrev={carriedAdvanceFromPrev}
+              onClearAllAdvances={handleClearAllAdvancesEverywhere}
+              manualRemaining={milaManualRemaining}
+              setManualRemaining={setMilaManualRemaining}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
