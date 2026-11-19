@@ -37,10 +37,21 @@ function getLocalTodayISO() {
 
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (!rawMonth) return `${fallbackYear}-07`;
+
+  if (typeof rawMonth === 'object') {
+    const candidate = rawMonth.value || rawMonth.key || rawMonth.month || rawMonth.label || '';
+    return normalizeMonthKey(candidate, fallbackYear);
+  }
+
   const str = String(rawMonth).trim().toLowerCase();
 
   if (/^\d{4}-\d{2}$/.test(str)) {
     return str;
+  }
+
+  if (/^\d{4}-\d{1,2}$/.test(str)) {
+    const [y, m] = str.split('-');
+    return `${y}-${m.padStart(2, '0')}`;
   }
 
   if (/^\d{1,2}$/.test(str)) {
@@ -52,7 +63,7 @@ function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
     return `${fallbackYear}-${UKRAINIAN_MONTH_MAP[str]}`;
   }
 
-  return str;
+  return `${fallbackYear}-07`;
 }
 
 function formatDayMonth(val) {
@@ -68,34 +79,49 @@ function formatDayMonth(val) {
   return trimmed;
 }
 
-function getMonthFromDate(isoDate, fallbackMonth) {
-  if (isoDate && typeof isoDate === 'string' && isoDate.length >= 7 && isoDate.includes('-')) {
-    return isoDate.slice(0, 7);
+function getMonthFromRow(row, fallbackMonth, fallbackYear) {
+  if (row?.month) {
+    return normalizeMonthKey(row.month, fallbackYear);
+  }
+  if (row?.isoDate && typeof row.isoDate === 'string' && row.isoDate.includes('-')) {
+    const parts = row.isoDate.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  if (row?.date && typeof row.date === 'string' && row.date.includes('.')) {
+    const parts = row.date.split('.');
+    if (parts.length >= 2) {
+      return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
+    }
   }
   return fallbackMonth;
 }
 
-export default function ManufacturerLedger({
-  manufacturerName,
-  paymentMode = 'prepaid',
-  selectedMonth,
-  month,
-  selectedYear,
-  year,
-  rows = [],
-  setRows,
-  depositsList = [],
-  setDepositsList,
-  exchangeRate = 45.0,
-  setExchangeRate,
-  initialDebt = 0,
-  setInitialDebt,
-  shoesCatalog = []
-}) {
+export default function ManufacturerLedger(props) {
+  const {
+    manufacturerName = 'Міла',
+    paymentMode = 'prepaid',
+    selectedMonth,
+    month,
+    currentMonth,
+    activeMonth: propActiveMonth,
+    selectedYear,
+    year,
+    currentYear: propCurrentYear,
+    rows = [],
+    setRows = () => {},
+    depositsList = [],
+    setDepositsList = () => {},
+    exchangeRate = 45.0,
+    shoesCatalog = []
+  } = props;
+
   const todayISO = getLocalTodayISO();
-  const currentYear = String(selectedYear || year || todayISO.slice(0, 4));
-  const rawMonthInput = selectedMonth || month || todayISO.slice(0, 7);
-  const activeMonth = normalizeMonthKey(rawMonthInput, currentYear);
+  const resolvedYear = String(selectedYear || year || propCurrentYear || '2026');
+  const rawMonthInput =
+    selectedMonth || month || currentMonth || propActiveMonth || `07`;
+  const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
   const [newDepositDate, setNewDepositDate] = useState(`${activeMonth}-01`);
@@ -108,18 +134,12 @@ export default function ManufacturerLedger({
 
   const monthRows = rows.filter((r) => {
     if (r.isEditing) return true;
-    const rowMonth = normalizeMonthKey(
-      r.month || getMonthFromDate(r.isoDate, activeMonth),
-      currentYear
-    );
+    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
     return rowMonth === activeMonth;
   });
 
   const monthDeposits = depositsList.filter((d) => {
-    const depMonth = normalizeMonthKey(
-      d.month || getMonthFromDate(d.isoDate, activeMonth),
-      currentYear
-    );
+    const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
     return depMonth === activeMonth;
   });
 
@@ -165,7 +185,7 @@ export default function ManufacturerLedger({
   const handleAddDeposit = () => {
     if (!newDepositAmount) return;
     const chosenDate = newDepositDate || `${activeMonth}-01`;
-    const depMonth = normalizeMonthKey(getMonthFromDate(chosenDate, activeMonth), currentYear);
+    const depMonth = getMonthFromRow({ isoDate: chosenDate }, activeMonth, resolvedYear);
     const item = {
       id: Date.now(),
       isoDate: chosenDate,
@@ -189,7 +209,7 @@ export default function ManufacturerLedger({
 
           if (field === 'isoDate' && value) {
             updated.date = formatDayMonth(value);
-            updated.month = normalizeMonthKey(getMonthFromDate(value, activeMonth), currentYear);
+            updated.month = getMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
           }
 
           if (field === 'shoeId' && value) {
@@ -330,10 +350,7 @@ export default function ManufacturerLedger({
 
     setRows((prevRows) =>
       prevRows.map((r) => {
-        const rMonth = normalizeMonthKey(
-          r.month || getMonthFromDate(r.isoDate, activeMonth),
-          currentYear
-        );
+        const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
         if (rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
           return {
             ...r,
@@ -713,6 +730,11 @@ export default function ManufacturerLedger({
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
                 {paidUAH.toFixed(0)} грн
               </span>
+              {totalPatternsUAH > 0 && (
+                <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: '700' }}>
+                  в т.ч. лекала: {totalPatternsUAH.toFixed(0)} грн
+                </span>
+              )}
             </div>
 
             <div
