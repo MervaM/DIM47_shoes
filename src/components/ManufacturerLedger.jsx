@@ -335,9 +335,8 @@ export default function ManufacturerLedger(props) {
   const paidInThisMonthFromOtherMonths = externalRows.filter((r) => {
     if (r.type !== 'item' || !r.isPaid || r.isEditing) return false;
     const storageM = r._storageMonthKey || activeMonth;
-    const orderMonth = getOrderMonthFromRow(r, storageM, resolvedYear);
     const paidMonth = getPaidMonthFromRow(r, storageM, resolvedYear);
-    return paidMonth === activeMonth && orderMonth !== activeMonth;
+    return paidMonth === activeMonth;
   });
 
   const monthRows = [
