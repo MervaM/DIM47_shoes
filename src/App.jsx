@@ -4,13 +4,7 @@ import './App.css';
 
 function App() {
   return (
-    <div className="min-h-screen bg-gray-100 py-8 overflow-x-clip">
-      <header className="sticky-top-header max-w-6xl mx-auto px-6 py-4 mb-6">
-        <h1 className="text-xs font-semibold tracking-wider text-indigo-600 uppercase">
-          DIM47 • Система обліку та звітності
-        </h1>
-      </header>
-
+    <div className="min-h-screen bg-gray-100 py-4 overflow-x-clip">
       <main>
         <MonthView />
       </main>
