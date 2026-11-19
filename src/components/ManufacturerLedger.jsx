@@ -171,6 +171,8 @@ export default function ManufacturerLedger(props) {
     setRows = () => {},
     depositsList = [],
     setDepositsList = () => {},
+    carriedAdvanceFromPrev = 0,
+    carriedDebtFromPrev = 0,
     exchangeRate = 45.0,
     shoesCatalog = []
   } = props;
@@ -211,7 +213,7 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Рядки та аванси з ПОПЕРЕДНІХ місяців (< activeMonth) для переносу авансу та боргу
+  // Якщо в rows / depositsList передані дані за попередні місяці (< activeMonth), теж враховуємо
   const prevRows = rows.filter((r) => {
     if (r.type !== 'item' || r.isEditing) return false;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
@@ -223,13 +225,13 @@ export default function ManufacturerLedger(props) {
     return depMonth < activeMonth;
   });
 
-  let prevDepositsSum = 0;
+  let localPrevDepositsSum = 0;
   prevDeposits.forEach((d) => {
-    prevDepositsSum += Number(d.amount) || 0;
+    localPrevDepositsSum += Number(d.amount) || 0;
   });
 
-  let prevPaidFromAdvanceUAH = 0;
-  let prevUnpaidDebtUAH = 0;
+  let localPrevPaidFromAdvanceUAH = 0;
+  let localPrevUnpaidDebtUAH = 0;
 
   prevRows.forEach((row) => {
     const qty = Number(row.quantity) || 0;
@@ -240,16 +242,18 @@ export default function ManufacturerLedger(props) {
 
     if (row.isPaid) {
       if (row.paySource !== 'separate') {
-        prevPaidFromAdvanceUAH += rowFullUAH;
+        localPrevPaidFromAdvanceUAH += rowFullUAH;
       }
     } else {
-      prevUnpaidDebtUAH += rowFullUAH;
+      localPrevUnpaidDebtUAH += rowFullUAH;
     }
   });
 
-  // Перенесений з минулих місяців залишок авансу та борг
-  const carriedAdvanceBalance = prevDepositsSum - prevPaidFromAdvanceUAH;
-  const carriedDebtUAH = prevUnpaidDebtUAH;
+  const localCarriedAdvance = localPrevDepositsSum - localPrevPaidFromAdvanceUAH;
+  const carriedAdvanceBalance =
+    Number(carriedAdvanceFromPrev) !== 0 ? Number(carriedAdvanceFromPrev) : localCarriedAdvance;
+  const carriedDebtUAH =
+    Number(carriedDebtFromPrev) !== 0 ? Number(carriedDebtFromPrev) : localPrevUnpaidDebtUAH;
 
   // Рядки поточного місяця
   const monthRows = rows.filter((r) => {

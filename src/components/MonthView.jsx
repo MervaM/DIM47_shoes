@@ -9,6 +9,83 @@ const MONTHS_UKR = [
   'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'
 ];
 
+function getDepositsForMonth(monthData, monthKey, monthIndex) {
+  if (Array.isArray(monthData?.milaDepositsList)) {
+    return monthData.milaDepositsList;
+  }
+  if (Number(monthData?.milaDeposit) > 0) {
+    return [
+      {
+        id: `legacy_${monthKey}`,
+        isoDate: `${monthKey}-01`,
+        month: monthKey,
+        date: `01.${String(monthIndex + 1).padStart(2, '0')}`,
+        amount: Number(monthData.milaDeposit)
+      }
+    ];
+  }
+  return [];
+}
+
+function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufacturer) {
+  let depositsSum = 0;
+  let paidFromAdvanceUAH = 0;
+  let unpaidDebtUAH = 0;
+
+  const sortedKeys = Object.keys(allMonthsMap || {}).sort();
+
+  sortedKeys.forEach((key) => {
+    if (key >= currentMonthKey) return;
+    const mData = allMonthsMap[key] || {};
+    const parts = key.split('-');
+    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
+
+    if (manufacturer === 'Міла') {
+      const mDeposits = getDepositsForMonth(mData, key, mIdx);
+      mDeposits.forEach((d) => {
+        depositsSum += Number(d.amount) || 0;
+      });
+
+      const rows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
+      rows.forEach((row) => {
+        if (row.type !== 'item' || row.isEditing) return;
+        const qty = Number(row.quantity) || 0;
+        const costUSD = Number(row.customCostUSD) || 0;
+        const patternUAH = Number(row.patternCostUAH) || 0;
+        const rate = Number(row.rowRate) || Number(mData.milaRate) || 45;
+        const rowFullUAH = qty * costUSD * rate + patternUAH;
+
+        if (row.isPaid) {
+          if (row.paySource !== 'separate') {
+            paidFromAdvanceUAH += rowFullUAH;
+          }
+        } else {
+          unpaidDebtUAH += rowFullUAH;
+        }
+      });
+    } else if (manufacturer === 'Валерій') {
+      const rows = Array.isArray(mData.valeraRows) ? mData.valeraRows : [];
+      rows.forEach((row) => {
+        if (row.type !== 'item' || row.isEditing) return;
+        const qty = Number(row.quantity) || 0;
+        const costUSD = Number(row.customCostUSD) || 0;
+        const patternUAH = Number(row.patternCostUAH) || 0;
+        const rate = Number(row.rowRate) || Number(mData.valeraRate) || 45;
+        const rowFullUAH = qty * costUSD * rate + patternUAH;
+
+        if (!row.isPaid) {
+          unpaidDebtUAH += rowFullUAH;
+        }
+      });
+    }
+  });
+
+  return {
+    carriedAdvance: depositsSum - paidFromAdvanceUAH,
+    carriedDebt: unpaidDebtUAH
+  };
+}
+
 export default function MonthView() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth()); // 0-11
@@ -18,9 +95,12 @@ export default function MonthView() {
   const [isLoading, setIsLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState('saved');
 
+  // Усі місяці з бази для розрахунку переносу залишків і боргів
+  const [allMonthsMap, setAllMonthsMap] = useState({});
+
   // Дані для поточного обраного місяця
   const [milaDepositsList, setMilaDepositsList] = useState([]);
-  const [milaInitialDebt, setMilaInitialDebt] = useState(1200);
+  const [milaInitialDebt, setMilaInitialDebt] = useState(0);
   const [milaRate, setMilaRate] = useState(45.0);
   const [milaRows, setMilaRows] = useState([]);
 
@@ -59,24 +139,10 @@ export default function MonthView() {
       } else if (data && data.data) {
         const allMonthsData = data.data.months || {};
         const monthData = allMonthsData[monthKey] || {};
-
-        // Підтримуємо як новий масив milaDepositsList, так і старе число milaDeposit (якщо раптом було)
-        let loadedDeposits = [];
-        if (Array.isArray(monthData.milaDepositsList)) {
-          loadedDeposits = monthData.milaDepositsList;
-        } else if (Number(monthData.milaDeposit) > 0) {
-          loadedDeposits = [
-            {
-              id: `legacy_${monthKey}`,
-              isoDate: `${monthKey}-01`,
-              month: monthKey,
-              date: `01.${String(selectedMonth + 1).padStart(2, '0')}`,
-              amount: Number(monthData.milaDeposit)
-            }
-          ];
-        }
+        const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
 
         isRemoteUpdate.current = true;
+        setAllMonthsMap(allMonthsData);
         setMilaDepositsList(loadedDeposits);
         setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
         setMilaRate(monthData.milaRate ?? 45.0);
@@ -105,6 +171,24 @@ export default function MonthView() {
       return;
     }
 
+    const depositsTotal = milaDepositsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+    const updatedMonthObj = {
+      milaDepositsList,
+      milaDeposit: depositsTotal,
+      milaInitialDebt,
+      milaRate,
+      milaRows,
+      valeraRate,
+      valeraRows,
+      expenses
+    };
+
+    setAllMonthsMap((prev) => ({
+      ...prev,
+      [monthKey]: updatedMonthObj
+    }));
+
     setSyncStatus('saving');
     const timer = setTimeout(async () => {
       const { data: existingData } = await supabase
@@ -114,19 +198,9 @@ export default function MonthView() {
         .maybeSingle();
 
       const currentRoot = existingData?.data || {};
-      const months = currentRoot.months || {};
-
-      const depositsTotal = milaDepositsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-      months[monthKey] = {
-        milaDepositsList,
-        milaDeposit: depositsTotal,
-        milaInitialDebt,
-        milaRate,
-        milaRows,
-        valeraRate,
-        valeraRows,
-        expenses
+      const months = {
+        ...(currentRoot.months || {}),
+        [monthKey]: updatedMonthObj
       };
 
       const payloadToSave = {
@@ -150,9 +224,25 @@ export default function MonthView() {
     return () => clearTimeout(timer);
   }, [milaDepositsList, milaInitialDebt, milaRate, milaRows, valeraRate, valeraRows, expenses, shoesCatalog, monthKey, isLoading]);
 
+  const milaCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Міла');
+  const valeraCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Валерій');
+
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem', background: '#ffffff', padding: '1.5rem', borderRadius: '1rem', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+      <div
+        className="sticky-top-header"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1rem',
+          marginBottom: '2rem',
+          background: '#ffffff',
+          padding: '1.5rem',
+          borderRadius: '1rem',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)'
+        }}
+      >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -236,6 +326,8 @@ export default function MonthView() {
               setRows={setMilaRows}
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
+              carriedAdvanceFromPrev={milaCarry.carriedAdvance}
+              carriedDebtFromPrev={milaCarry.carriedDebt}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
@@ -252,6 +344,8 @@ export default function MonthView() {
               selectedYear={selectedYear}
               rows={valeraRows}
               setRows={setValeraRows}
+              carriedAdvanceFromPrev={valeraCarry.carriedAdvance}
+              carriedDebtFromPrev={valeraCarry.carriedDebt}
               exchangeRate={valeraRate}
               setExchangeRate={setValeraRate}
               shoesCatalog={shoesCatalog}
