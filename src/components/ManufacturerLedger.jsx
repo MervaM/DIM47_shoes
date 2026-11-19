@@ -302,7 +302,8 @@ export default function ManufacturerLedger(props) {
             if (found) {
               updated.customCostUSD = found.defaultCostUSD;
               updated.photo = found.photo || '';
-              updated.isEditing = false;
+              // Залишаємо рядок відкритим, щоб можна було одразу вписати курс, кількість або лекала
+              updated.isEditing = true;
             }
           }
 
@@ -310,6 +311,7 @@ export default function ManufacturerLedger(props) {
             updated.paidAt = value ? formatDayMonth(todayISO) : '';
             if (value) {
               updated.isSelectedForPay = false;
+              updated.isEditing = false;
             }
           }
 
@@ -330,7 +332,7 @@ export default function ManufacturerLedger(props) {
             shoeId: shoe.id,
             customCostUSD: shoe.defaultCostUSD,
             photo: shoe.photo || '',
-            isEditing: false
+            isEditing: true
           };
         }
         return row;
@@ -363,7 +365,7 @@ export default function ManufacturerLedger(props) {
       const qty = Number(row.quantity) || 0;
       const costUSD = Number(row.customCostUSD) || 0;
       const patternUAH = Number(row.patternCostUAH) || 0;
-      const rRate = Number(row.rowRate) || exchangeRate || 45.0;
+      const rRate = Number(row.rowRate) || 0;
       const isPaid = Boolean(row.isPaid);
       const isChecked = Boolean(row.isSelectedForPay);
 
@@ -384,7 +386,7 @@ export default function ManufacturerLedger(props) {
           checkedPairs += qty;
           checkedUSD += rowUSD;
           checkedPatternsUAH += patternUAH;
-          checkedRate = rRate;
+          if (rRate > 0) checkedRate = rRate;
           checkedCalculatedUAH += rowFullUAH;
         }
       }
@@ -505,6 +507,7 @@ export default function ManufacturerLedger(props) {
                 Виберіть модель ({manufacturerName})
               </h3>
               <button
+                type="button"
                 onClick={() => setActiveRowForPicker(null)}
                 style={{
                   background: 'none',
@@ -850,7 +853,7 @@ export default function ManufacturerLedger(props) {
           </div>
         </div>
 
-        {/* ТАБЛИЦЯ ПОЗИЦІЙ (І ОПЛАЧЕНІ, І НЕОПЛАЧЕНІ ЗВЕРХУ) */}
+        {/* ТАБЛИЦЯ З ВІДКРИТИМИ ПОЛЯМИ ДЛЯ ВВОДУ КУРСУ, ЦІНИ, КІЛЬКОСТІ ТА ЛЕКАЛ */}
         <div
           style={{
             overflowX: 'auto',
@@ -878,23 +881,28 @@ export default function ManufacturerLedger(props) {
                 }}
               >
                 <th
-                  style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '44px' }}
+                  style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '40px' }}
                   title="Вибрати пару для оплати"
                 >
                   ✓
                 </th>
-                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '55px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.75rem', width: '80px' }}>Дата</th>
-                <th style={{ padding: '0.6rem 0.75rem' }}>Модель / Артикул — Назва</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', width: '60px' }}>К-ть</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '125px' }}>
-                  Долар ($)
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
+                <th style={{ padding: '0.6rem 0.4rem', width: '76px' }}>Дата</th>
+                <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
+                  Ціна $
                 </th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '75px' }}>Курс</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '165px' }}>
-                  Вартість в грн
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '82px' }}>
+                  Курс
                 </th>
-                <th style={{ padding: '0.6rem 0.5rem', width: '50px' }}></th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
+                  Лекало грн
+                </th>
+                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', width: '130px' }}>
+                  Разом грн
+                </th>
+                <th style={{ padding: '0.6rem 0.35rem', width: '36px' }}></th>
               </tr>
             </thead>
             <tbody>
@@ -921,7 +929,7 @@ export default function ManufacturerLedger(props) {
                       style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a' }}
                     >
                       <td></td>
-                      <td colSpan="6" style={{ padding: '0.6rem 0.75rem' }}>
+                      <td colSpan="7" style={{ padding: '0.6rem 0.5rem' }}>
                         <div
                           style={{
                             display: 'flex',
@@ -987,7 +995,7 @@ export default function ManufacturerLedger(props) {
                           )}
                         </div>
                       </td>
-                      <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
+                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right' }}>
                         <button
                           type="button"
                           onClick={() => handlePaySubtotal(row.id)}
@@ -1004,7 +1012,7 @@ export default function ManufacturerLedger(props) {
                             padding: '0.3rem 0.65rem',
                             borderRadius: '0.4rem',
                             fontWeight: '900',
-                            fontSize: '0.85rem',
+                            fontSize: '0.82rem',
                             cursor: hasCheckedPairs ? 'pointer' : 'default',
                             whiteSpace: 'nowrap'
                           }}
@@ -1042,7 +1050,6 @@ export default function ManufacturerLedger(props) {
                 const isPaid = Boolean(row.isPaid);
                 const isChecked = Boolean(row.isSelectedForPay);
 
-                const isEditing = !isPaid && (row.isEditing !== undefined ? row.isEditing : !row.shoeId);
                 const rowUSD = qty * costUSD;
                 const shoePartUAH = rowUSD * rRate;
                 const rowFullUAH = shoePartUAH + patternUAH;
@@ -1050,7 +1057,7 @@ export default function ManufacturerLedger(props) {
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
-                const displayDate = row.date || formatDayMonth(row.isoDate) || '—';
+                const displayDate = row.date || formatDayMonth(row.isoDate) || '';
 
                 return (
                   <tr
@@ -1063,388 +1070,296 @@ export default function ManufacturerLedger(props) {
                       transition: 'background 0.2s'
                     }}
                   >
-                    {!isEditing ? (
-                      <>
-                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                          {isPaid ? (
-                            <span
-                              title="Оплачено"
-                              style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}
-                            >
-                              ✓
-                            </span>
-                          ) : (
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
-                              }
-                              style={{
-                                width: '18px',
-                                height: '18px',
-                                cursor: 'pointer',
-                                accentColor: '#4f46e5'
-                              }}
-                              title="Відмітити пару для оплати"
-                            />
-                          )}
-                        </td>
-                        <td
-                          style={{
-                            padding: '0.6rem 0.5rem',
-                            textAlign: 'center',
-                            fontWeight: '700',
-                            color: '#94a3b8'
-                          }}
+                    {/* Галочка */}
+                    <td style={{ padding: '0.5rem 0.35rem', textAlign: 'center' }}>
+                      {isPaid ? (
+                        <span
+                          title="Оплачено"
+                          style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}
                         >
-                          {currentPairNumber}
-                        </td>
-                        <td style={{ padding: '0.6rem 0.75rem', fontWeight: '600' }}>
-                          {displayDate}
-                        </td>
-                        <td style={{ padding: '0.6rem 0.75rem' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <div
-                                style={{
-                                  width: '32px',
-                                  height: '32px',
-                                  borderRadius: '0.3rem',
-                                  overflow: 'hidden',
-                                  background: '#e2e8f0',
-                                  flexShrink: 0
-                                }}
-                              >
-                                {row.photo ? (
-                                  <img
-                                    src={row.photo}
-                                    alt=""
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                  />
-                                ) : (
-                                  <div
-                                    style={{
-                                      width: '100%',
-                                      height: '100%',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: '0.5rem',
-                                      color: '#64748b'
-                                    }}
-                                  >
-                                    фото
-                                  </div>
-                                )}
-                              </div>
-                              <span
-                                style={{
-                                  fontWeight: '700',
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  maxWidth: '260px'
-                                }}
-                              >
-                                {displayName}
-                              </span>
-                            </div>
+                          ✓
+                        </span>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) =>
+                            handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
+                          }
+                          style={{
+                            width: '18px',
+                            height: '18px',
+                            cursor: 'pointer',
+                            accentColor: '#4f46e5'
+                          }}
+                          title="Відмітити пару для оплати"
+                        />
+                      )}
+                    </td>
 
-                            {/* Зелена кнопка "Оплачено" прямо під оплаченим замовленням зверху */}
-                            {isPaid && (
-                              <div>
-                                <button
-                                  type="button"
-                                  disabled
-                                  style={{
-                                    background: '#16a34a',
-                                    color: '#ffffff',
-                                    border: 'none',
-                                    padding: '0.22rem 0.65rem',
-                                    borderRadius: '0.4rem',
-                                    fontWeight: '800',
-                                    fontSize: '0.72rem',
-                                    cursor: 'default'
-                                  }}
-                                >
-                                  ✓ Оплачено
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontWeight: '700' }}>
-                          {qty}
-                        </td>
-                        <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                          <div>${rowUSD.toFixed(0)}</div>
-                          {patternUAH > 0 && (
-                            <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
-                              +{patternUAH} лекало
-                            </div>
-                          )}
-                        </td>
-                        <td
+                    {/* № */}
+                    <td
+                      style={{
+                        padding: '0.5rem 0.35rem',
+                        textAlign: 'center',
+                        fontWeight: '700',
+                        color: '#94a3b8'
+                      }}
+                    >
+                      {currentPairNumber}
+                    </td>
+
+                    {/* Дата (відкрита для вводу вручну для неоплачених) */}
+                    <td style={{ padding: '0.5rem 0.35rem' }}>
+                      {isPaid ? (
+                        <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
+                      ) : (
+                        <input
+                          type="text"
+                          value={displayDate}
+                          onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
+                          placeholder={`ДД.${activeMM}`}
                           style={{
-                            padding: '0.6rem 0.75rem',
-                            textAlign: 'right',
-                            fontWeight: '600',
-                            color: isPaid ? '#64748b' : '#4f46e5'
+                            width: '66px',
+                            padding: '0.25rem 0.35rem',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '0.35rem',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            textAlign: 'center',
+                            background: '#fff'
                           }}
-                        >
-                          {rRate}
-                        </td>
-                        <td
-                          style={{
-                            padding: '0.6rem 0.75rem',
-                            textAlign: 'right',
-                            fontWeight: '900',
-                            color: isPaid ? '#15803d' : '#0f172a'
-                          }}
-                        >
-                          <div>{rowFullUAH.toFixed(0)} грн</div>
-                          {isPaid && (
-                            <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '600' }}>
-                              (не сумується)
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                          title="Дата вручну ДД.ММ"
+                        />
+                      )}
+                    </td>
+
+                    {/* Фото + Вибір моделі + зелена кнопка Оплачено під оплаченим */}
+                    <td style={{ padding: '0.5rem 0.5rem' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                           <div
+                            onClick={() => !isPaid && setActiveRowForPicker(row.id)}
                             style={{
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '0.35rem',
+                              overflow: 'hidden',
+                              background: '#e2e8f0',
+                              border: isPaid ? '1px solid #cbd5e1' : '1px dashed #4f46e5',
+                              cursor: isPaid ? 'default' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              gap: '0.2rem'
+                              flexShrink: 0
                             }}
+                            title={isPaid ? '' : 'Обрати модель за фото'}
                           >
-                            {!isPaid && (
-                              <button
-                                type="button"
-                                onClick={() => handleRowChange(row.id, 'isEditing', true)}
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  color: '#4f46e5',
-                                  cursor: 'pointer',
-                                  fontSize: '0.8rem',
-                                  fontWeight: 'bold'
-                                }}
-                                title="Редагувати"
-                              >
-                                ✎
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRow(row.id)}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: '#cbd5e1',
-                                fontSize: '1.1rem',
-                                cursor: 'pointer'
-                              }}
-                              onMouseOver={(e) => (e.target.style.color = '#ef4444')}
-                              onMouseOut={(e) => (e.target.style.color = '#cbd5e1')}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <td colSpan="9" style={{ padding: '0.75rem', background: '#f8fafc' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={(e) =>
-                                  handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
-                                }
-                                style={{
-                                  width: '18px',
-                                  height: '18px',
-                                  cursor: 'pointer',
-                                  accentColor: '#4f46e5'
-                                }}
-                                title="Відмітити пару для оплати"
+                            {row.photo ? (
+                              <img
+                                src={row.photo}
+                                alt=""
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                               />
-                              <span
-                                style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}
-                              >
-                                ✏️ Редагування позиції #{currentPairNumber}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <button
-                                type="button"
-                                onClick={() => handleRowChange(row.id, 'isEditing', false)}
-                                style={{
-                                  background: '#16a34a',
-                                  color: '#fff',
-                                  border: 'none',
-                                  padding: '0.2rem 0.6rem',
-                                  borderRadius: '0.3rem',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 'bold',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                ✓ Готово
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRow(row.id)}
-                                style={{
-                                  background: '#fee2e2',
-                                  color: '#dc2626',
-                                  border: 'none',
-                                  padding: '0.2rem 0.4rem',
-                                  borderRadius: '0.3rem',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 'bold',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                Видалити
-                              </button>
-                            </div>
+                            ) : (
+                              <span style={{ fontSize: '0.55rem', color: '#4f46e5' }}>фото</span>
+                            )}
                           </div>
 
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '95px 45px 1fr 60px 100px 80px 100px',
-                              gap: '0.5rem',
-                              alignItems: 'center'
-                            }}
-                          >
-                            <input
-                              type="text"
-                              placeholder={`ДД.${activeMM}`}
-                              value={row.date || ''}
-                              onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
-                              className="input-field"
-                              style={{
-                                fontSize: '0.8rem',
-                                fontWeight: '700',
-                                padding: '0.25rem 0.4rem',
-                                background: '#fff',
-                                textAlign: 'center'
-                              }}
-                              title="Дата вручну ДД.ММ"
-                            />
-
-                            <div
-                              onClick={() => setActiveRowForPicker(row.id)}
-                              style={{
-                                width: '35px',
-                                height: '35px',
-                                cursor: 'pointer',
-                                borderRadius: '0.3rem',
-                                border: '2px dashed #4f46e5',
-                                overflow: 'hidden',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                background: '#f5f3ff'
-                              }}
-                            >
-                              {row.photo ? (
-                                <img
-                                  src={row.photo}
-                                  alt=""
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                />
-                              ) : (
-                                <span style={{ fontSize: '0.5rem', color: '#4f46e5' }}>фото</span>
-                              )}
-                            </div>
-
+                          {isPaid ? (
+                            <span style={{ fontWeight: '700' }}>{displayName}</span>
+                          ) : (
                             <select
                               value={row.shoeId || ''}
                               onChange={(e) => handleRowChange(row.id, 'shoeId', e.target.value)}
-                              className="input-field"
-                              style={{ fontSize: '0.8rem', padding: '0.25rem', fontWeight: '600' }}
+                              style={{
+                                flex: 1,
+                                minWidth: '150px',
+                                padding: '0.28rem 0.4rem',
+                                border: '1px solid #cbd5e1',
+                                borderRadius: '0.35rem',
+                                fontSize: '0.8rem',
+                                fontWeight: '600',
+                                background: '#fff'
+                              }}
                             >
                               <option value="">-- Виберіть модель --</option>
                               {manufacturerShoes.map((shoe) => (
                                 <option key={shoe.id} value={shoe.id}>
-                                  {shoe.id ? `${shoe.id} — ` : ''} {shoe.name}
+                                  {shoe.id ? `[${shoe.id}] ` : ''}
+                                  {shoe.name}
                                 </option>
                               ))}
                             </select>
-
-                            <input
-                              type="number"
-                              min="1"
-                              value={row.quantity}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'quantity', Number(e.target.value))
-                              }
-                              className="input-field"
-                              style={{ textAlign: 'center', fontSize: '0.8rem', padding: '0.25rem' }}
-                            />
-
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Ціна $"
-                              value={row.customCostUSD}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'customCostUSD', Number(e.target.value))
-                              }
-                              className="input-field"
-                              style={{ textAlign: 'right', fontSize: '0.8rem', padding: '0.25rem' }}
-                            />
-
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={row.rowRate}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'rowRate', Number(e.target.value))
-                              }
-                              className="input-field"
-                              style={{
-                                textAlign: 'right',
-                                fontSize: '0.8rem',
-                                padding: '0.25rem',
-                                fontWeight: 'bold',
-                                color: '#4f46e5'
-                              }}
-                            />
-
-                            <input
-                              type="number"
-                              placeholder="Лекало грн"
-                              value={row.patternCostUAH || ''}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'patternCostUAH', Number(e.target.value))
-                              }
-                              className="input-field"
-                              style={{
-                                textAlign: 'right',
-                                fontSize: '0.8rem',
-                                padding: '0.25rem',
-                                color: '#d97706'
-                              }}
-                            />
-                          </div>
+                          )}
                         </div>
-                      </td>
-                    )}
+
+                        {isPaid && (
+                          <div>
+                            <button
+                              type="button"
+                              disabled
+                              style={{
+                                background: '#16a34a',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '0.2rem 0.65rem',
+                                borderRadius: '0.4rem',
+                                fontWeight: '800',
+                                fontSize: '0.72rem',
+                                cursor: 'default'
+                              }}
+                            >
+                              ✓ Оплачено
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* К-ть */}
+                    <td style={{ padding: '0.5rem 0.35rem', textAlign: 'center' }}>
+                      {isPaid ? (
+                        <span style={{ fontWeight: '700' }}>{qty}</span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="1"
+                          value={row.quantity}
+                          onChange={(e) =>
+                            handleRowChange(row.id, 'quantity', Number(e.target.value))
+                          }
+                          style={{
+                            width: '54px',
+                            padding: '0.25rem 0.3rem',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '0.35rem',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            textAlign: 'center',
+                            background: '#fff'
+                          }}
+                        />
+                      )}
+                    </td>
+
+                    {/* Ціна $ */}
+                    <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
+                      {isPaid ? (
+                        <span style={{ fontWeight: '600' }}>${rowUSD.toFixed(0)}</span>
+                      ) : (
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="$"
+                          value={row.customCostUSD}
+                          onChange={(e) =>
+                            handleRowChange(row.id, 'customCostUSD', e.target.value)
+                          }
+                          style={{
+                            width: '82px',
+                            padding: '0.25rem 0.35rem',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '0.35rem',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            textAlign: 'right',
+                            background: '#fff'
+                          }}
+                        />
+                      )}
+                    </td>
+
+                    {/* Курс (відкритий для вводу кожного разу) */}
+                    <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
+                      {isPaid ? (
+                        <span style={{ fontWeight: '600' }}>{rRate}</span>
+                      ) : (
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={row.rowRate}
+                          onChange={(e) =>
+                            handleRowChange(row.id, 'rowRate', e.target.value)
+                          }
+                          style={{
+                            width: '72px',
+                            padding: '0.25rem 0.35rem',
+                            border: '1px solid #a5b4fc',
+                            borderRadius: '0.35rem',
+                            fontSize: '0.8rem',
+                            fontWeight: '800',
+                            color: '#4f46e5',
+                            textAlign: 'right',
+                            background: '#fff'
+                          }}
+                          title="Впиши актуальний курс для цієї пари"
+                        />
+                      )}
+                    </td>
+
+                    {/* Лекало грн */}
+                    <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
+                      {isPaid ? (
+                        <span style={{ fontWeight: '600' }}>{patternUAH || 0}</span>
+                      ) : (
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={row.patternCostUAH || ''}
+                          onChange={(e) =>
+                            handleRowChange(row.id, 'patternCostUAH', e.target.value)
+                          }
+                          style={{
+                            width: '82px',
+                            padding: '0.25rem 0.35rem',
+                            border: '1px solid #fcd34d',
+                            borderRadius: '0.35rem',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            color: '#d97706',
+                            textAlign: 'right',
+                            background: '#fff'
+                          }}
+                        />
+                      )}
+                    </td>
+
+                    {/* Разом грн */}
+                    <td
+                      style={{
+                        padding: '0.5rem 0.5rem',
+                        textAlign: 'right',
+                        fontWeight: '900',
+                        color: isPaid ? '#15803d' : '#0f172a'
+                      }}
+                    >
+                      <div>{rowFullUAH.toFixed(0)} грн</div>
+                      {isPaid && (
+                        <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '600' }}>
+                          (не сумується)
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Видалити */}
+                    <td style={{ padding: '0.5rem 0.25rem', textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRow(row.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#cbd5e1',
+                          fontSize: '1.1rem',
+                          cursor: 'pointer'
+                        }}
+                        onMouseOver={(e) => (e.target.style.color = '#ef4444')}
+                        onMouseOut={(e) => (e.target.style.color = '#cbd5e1')}
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1458,10 +1373,10 @@ export default function ManufacturerLedger(props) {
                   fontWeight: '800'
                 }}
               >
-                <td style={{ padding: '0.75rem 0.5rem' }}></td>
+                <td style={{ padding: '0.75rem 0.35rem' }}></td>
                 <td
                   style={{
-                    padding: '0.75rem 0.5rem',
+                    padding: '0.75rem 0.35rem',
                     textAlign: 'center',
                     color: '#0f172a',
                     whiteSpace: 'nowrap'
@@ -1470,9 +1385,9 @@ export default function ManufacturerLedger(props) {
                   {hasCheckedPairs ? `${checkedPairs} шт` : `${unpaidPairs} шт`}
                 </td>
                 <td
-                  colSpan="2"
+                  colSpan="3"
                   style={{
-                    padding: '0.75rem 0.75rem',
+                    padding: '0.75rem 0.5rem',
                     color: '#334155',
                     textTransform: 'uppercase',
                     fontSize: '0.8rem'
@@ -1480,17 +1395,23 @@ export default function ManufacturerLedger(props) {
                 >
                   {hasCheckedPairs ? 'РАЗОМ (З ГАЛОЧКОЮ):' : 'РАЗОМ (НЕОПЛАЧЕНО):'}
                 </td>
-                <td></td>
-                <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', color: '#0f172a' }}>
-                  <div>${hasCheckedPairs ? checkedUSD.toFixed(2) : unpaidUSD.toFixed(2)}</div>
-                  {(hasCheckedPairs ? checkedPatternsUAH : unpaidPatternsUAH) > 0 && (
-                    <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
-                      + {(hasCheckedPairs ? checkedPatternsUAH : unpaidPatternsUAH).toFixed(0)} грн лекала
-                    </div>
-                  )}
+                <td style={{ padding: '0.75rem 0.35rem', textAlign: 'right', color: '#0f172a' }}>
+                  ${hasCheckedPairs ? checkedUSD.toFixed(2) : unpaidUSD.toFixed(2)}
                 </td>
                 <td></td>
-                <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', fontSize: '0.95rem' }}>
+                <td
+                  style={{
+                    padding: '0.75rem 0.35rem',
+                    textAlign: 'right',
+                    color: '#d97706',
+                    fontSize: '0.8rem'
+                  }}
+                >
+                  {(hasCheckedPairs ? checkedPatternsUAH : unpaidPatternsUAH) > 0
+                    ? `+${(hasCheckedPairs ? checkedPatternsUAH : unpaidPatternsUAH).toFixed(0)}`
+                    : '0'}
+                </td>
+                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right', fontSize: '0.95rem' }}>
                   <div
                     onClick={() => hasCheckedPairs && handlePaySubtotal(null)}
                     style={{
