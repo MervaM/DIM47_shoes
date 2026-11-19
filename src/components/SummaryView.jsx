@@ -9,6 +9,8 @@ const EXPENSE_CATEGORIES = [
   'Інше'
 ];
 
+const DAYS_IN_MONTH_LIST = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
+
 export default function SummaryView({
   monthKey = '',
   milaPaidRows,
@@ -20,6 +22,8 @@ export default function SummaryView({
   expenses = [],
   setExpenses = () => {}
 }) {
+  const defaultMM = monthKey && monthKey.includes('-') ? monthKey.split('-')[1] : '08';
+
   const calculateStats = (rows = [], defaultRate = 45) => {
     let pairs = 0;
     let uah = 0;
@@ -56,7 +60,6 @@ export default function SummaryView({
     return { pairs, uah, usd, patternsUAH, fromAdvanceUAH, separateUAH };
   };
 
-  // Використовуємо оплачені за датою оплати/видачі рядки; якщо передані лише звичайні rows — беремо isPaid з них
   const effectiveMilaPaid = Array.isArray(milaPaidRows)
     ? milaPaidRows
     : milaRows.filter((r) => r.type === 'item' && r.isPaid);
@@ -72,7 +75,7 @@ export default function SummaryView({
   const productionPaidUSD = milaPaidStats.usd + valeraPaidStats.usd;
   const totalPaidPatternsUAH = milaPaidStats.patternsUAH + valeraPaidStats.patternsUAH;
 
-  // Статистика за замовленнями, створеними у поточному місяці (для довідки: скільки всього замовлено і скільки ще в роботі)
+  // Статистика за замовленнями, створеними у поточному місяці
   const milaOrderedStats = calculateStats(milaRows, milaRate);
   const valeraOrderedStats = calculateStats(valeraRows, valeraRate);
   const totalOrderedPairs = milaOrderedStats.pairs + valeraOrderedStats.pairs;
@@ -89,7 +92,13 @@ export default function SummaryView({
   const handleAddExpense = () => {
     setExpenses([
       ...expenses,
-      { id: Date.now(), date: '', category: EXPENSE_CATEGORIES[0], description: '', amount: 0 }
+      {
+        id: Date.now(),
+        date: `01.${defaultMM}`,
+        category: EXPENSE_CATEGORIES[0],
+        description: '',
+        amount: 0
+      }
     ]);
   };
 
@@ -99,6 +108,14 @@ export default function SummaryView({
 
   const handleDeleteExpense = (id) => {
     setExpenses(expenses.filter((exp) => exp.id !== id));
+  };
+
+  const getExpenseDay = (dateStr) => {
+    const match = String(dateStr || '').match(/^(\d{1,2})/);
+    if (match) {
+      return String(Math.min(31, Math.max(1, Number(match[1]) || 1))).padStart(2, '0');
+    }
+    return '01';
   };
 
   return (
@@ -190,7 +207,7 @@ export default function SummaryView({
             <thead>
               <tr>
                 <th style={{ width: '50px', textAlign: 'center' }}>№</th>
-                <th style={{ width: '110px' }}>Дата</th>
+                <th style={{ width: '115px' }}>Дата</th>
                 <th style={{ width: '210px' }}>Категорія</th>
                 <th>Коментар / Призначення платежу</th>
                 <th style={{ width: '150px', textAlign: 'right' }}>Сума (грн)</th>
@@ -198,62 +215,73 @@ export default function SummaryView({
               </tr>
             </thead>
             <tbody>
-              {expenses.map((exp, index) => (
-                <tr key={exp.id}>
-                  <td style={{ textAlign: 'center', fontWeight: '600', color: '#9ca3af' }}>{index + 1}</td>
-                  <td>
-                    <input
-                      type="text"
-                      placeholder="ДД.ММ"
-                      value={exp.date}
-                      onChange={(e) => handleExpenseChange(exp.id, 'date', e.target.value)}
-                      className="input-field"
-                    />
-                  </td>
-                  <td>
-                    <select
-                      value={exp.category}
-                      onChange={(e) => handleExpenseChange(exp.id, 'category', e.target.value)}
-                      className="input-field"
-                      style={{ fontWeight: '600', color: '#374151' }}
-                    >
-                      {EXPENSE_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      placeholder="Наприклад: Таргет, повернення клієнту, податок..."
-                      value={exp.description}
-                      onChange={(e) => handleExpenseChange(exp.id, 'description', e.target.value)}
-                      className="input-field"
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      value={exp.amount}
-                      onChange={(e) => handleExpenseChange(exp.id, 'amount', Number(e.target.value))}
-                      className="input-field"
-                      style={{ textAlign: 'right', fontWeight: 'bold', color: '#dc2626' }}
-                    />
-                  </td>
-                  <td style={{ textAlign: 'center' }}>
-                    <button
-                      onClick={() => handleDeleteExpense(exp.id)}
-                      style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: '1.25rem', cursor: 'pointer' }}
-                      onMouseOver={(e) => (e.target.style.color = '#ef4444')}
-                      onMouseOut={(e) => (e.target.style.color = '#d1d5db')}
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {expenses.map((exp, index) => {
+                const expDay = getExpenseDay(exp.date);
+                return (
+                  <tr key={exp.id}>
+                    <td style={{ textAlign: 'center', fontWeight: '600', color: '#9ca3af' }}>{index + 1}</td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <select
+                          value={expDay}
+                          onChange={(e) => handleExpenseChange(exp.id, 'date', `${e.target.value}.${defaultMM}`)}
+                          className="input-field"
+                          style={{ padding: '0.35rem 0.25rem', fontWeight: '700' }}
+                        >
+                          {DAYS_IN_MONTH_LIST.map((d) => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#6b7280' }}>
+                          .{defaultMM}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <select
+                        value={exp.category}
+                        onChange={(e) => handleExpenseChange(exp.id, 'category', e.target.value)}
+                        className="input-field"
+                        style={{ fontWeight: '600', color: '#374151' }}
+                      >
+                        {EXPENSE_CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        placeholder="Наприклад: Таргет, повернення клієнту, податок..."
+                        value={exp.description}
+                        onChange={(e) => handleExpenseChange(exp.id, 'description', e.target.value)}
+                        className="input-field"
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={exp.amount}
+                        onChange={(e) => handleExpenseChange(exp.id, 'amount', Number(e.target.value))}
+                        className="input-field"
+                        style={{ textAlign: 'right', fontWeight: 'bold', color: '#dc2626' }}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        onClick={() => handleDeleteExpense(exp.id)}
+                        style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: '1.25rem', cursor: 'pointer' }}
+                        onMouseOver={(e) => (e.target.style.color = '#ef4444')}
+                        onMouseOut={(e) => (e.target.style.color = '#d1d5db')}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {expenses.length === 0 && (
                 <tr>
                   <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>

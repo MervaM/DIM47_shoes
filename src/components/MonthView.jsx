@@ -27,6 +27,26 @@ function getDepositsForMonth(monthData, monthKey, monthIndex) {
   return [];
 }
 
+function getRowOrderMonth(row, fallbackMonthKey) {
+  const fallbackYear = fallbackMonthKey.split('-')[0] || '2026';
+  if (row?.isoDate && typeof row.isoDate === 'string' && row.isoDate.includes('-')) {
+    const parts = row.isoDate.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  if (row?.date && typeof row.date === 'string' && row.date.includes('.')) {
+    const parts = row.date.split('.');
+    if (parts.length >= 2) {
+      return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
+    return String(row.month);
+  }
+  return fallbackMonthKey;
+}
+
 function getRowPaidMonth(row, fallbackMonthKey) {
   if (row?.paidMonth && /^\d{4}-\d{2}$/.test(String(row.paidMonth))) {
     return String(row.paidMonth);
@@ -45,10 +65,7 @@ function getRowPaidMonth(row, fallbackMonthKey) {
       return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
     }
   }
-  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
-    return String(row.month);
-  }
-  return fallbackMonthKey;
+  return getRowOrderMonth(row, fallbackMonthKey);
 }
 
 function calculateCarriedAdvance(allMonthsMap, currentMonthKey) {
@@ -86,6 +103,25 @@ function calculateCarriedAdvance(allMonthsMap, currentMonthKey) {
   });
 
   return prevDepositsSum - prevPaidFromAdvanceUAH;
+}
+
+function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
+  const seenIds = new Set();
+  const result = [];
+  const sortedKeys = Object.keys(allMonthsMap || {}).sort();
+
+  sortedKeys.forEach((key) => {
+    if (key === currentMonthKey) return;
+    const mData = allMonthsMap[key] || {};
+    const list = Array.isArray(mData[fieldName]) ? mData[fieldName] : [];
+    list.forEach((r) => {
+      if (!r || seenIds.has(r.id)) return;
+      seenIds.add(r.id);
+      result.push({ ...r, _storageMonthKey: key });
+    });
+  });
+
+  return result;
 }
 
 export default function MonthView() {
@@ -251,7 +287,81 @@ export default function MonthView() {
     setShoesCatalog(updater);
   };
 
+  const handleUpdateExternalRow = async (fieldName, storageMonthKey, rowId, patchOrDelete) => {
+    const targetMonthObj = allMonthsMap[storageMonthKey];
+    if (!targetMonthObj) return;
+
+    const existingList = Array.isArray(targetMonthObj[fieldName]) ? targetMonthObj[fieldName] : [];
+    const nextList =
+      patchOrDelete === null
+        ? existingList.filter((r) => r.id !== rowId)
+        : existingList.map((r) => (r.id === rowId ? { ...r, ...patchOrDelete } : r));
+
+    const nextTargetMonthObj = {
+      ...targetMonthObj,
+      [fieldName]: nextList
+    };
+
+    const nextAllMonths = {
+      ...allMonthsMap,
+      [storageMonthKey]: nextTargetMonthObj
+    };
+    setAllMonthsMap(nextAllMonths);
+
+    setSyncStatus('saving');
+    const { data: existingData } = await supabase
+      .from('app_state')
+      .select('data')
+      .eq('id', 1)
+      .maybeSingle();
+
+    const currentRoot = existingData?.data || {};
+    const payloadToSave = {
+      ...currentRoot,
+      months: {
+        ...(currentRoot.months || {}),
+        [storageMonthKey]: {
+          ...((currentRoot.months || {})[storageMonthKey] || targetMonthObj),
+          [fieldName]: nextList
+        }
+      }
+    };
+
+    const { error } = await supabase.from('app_state').upsert({ id: 1, data: payloadToSave });
+    if (error) {
+      console.error('Помилка оновлення перенесеного рядка:', error);
+      setSyncStatus('error');
+    } else {
+      setSyncStatus('saved');
+    }
+  };
+
   const carriedAdvanceFromPrev = calculateCarriedAdvance(allMonthsMap, monthKey);
+  const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
+  const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
+
+  // Для загальної звітності:
+  // 1) Усі пари, створені у поточному місяці (для лічильника "Замовлено в міс.")
+  const milaOrderedThisMonth = milaRows.filter(
+    (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
+  );
+  const valeraOrderedThisMonth = valeraRows.filter(
+    (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
+  );
+
+  // 2) Усі пари (зі свого або інших місяців), які оплачені саме в цьому місяці (за датою оплати)
+  const milaPaidThisMonth = [
+    ...milaRows.filter((r) => r.type === 'item' && r.isPaid && getRowPaidMonth(r, monthKey) === monthKey),
+    ...externalMilaRows.filter(
+      (r) => r.type === 'item' && r.isPaid && getRowPaidMonth(r, r._storageMonthKey || monthKey) === monthKey
+    )
+  ];
+  const valeraPaidThisMonth = [
+    ...valeraRows.filter((r) => r.type === 'item' && r.isPaid && getRowPaidMonth(r, monthKey) === monthKey),
+    ...externalValeraRows.filter(
+      (r) => r.type === 'item' && r.isPaid && getRowPaidMonth(r, r._storageMonthKey || monthKey) === monthKey
+    )
+  ];
 
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
@@ -335,8 +445,10 @@ export default function MonthView() {
             <SummaryView
               key={`summary-${monthKey}`}
               monthKey={monthKey}
-              milaRows={milaRows}
-              valeraRows={valeraRows}
+              milaPaidRows={milaPaidThisMonth}
+              valeraPaidRows={valeraPaidThisMonth}
+              milaRows={milaOrderedThisMonth}
+              valeraRows={valeraOrderedThisMonth}
               milaRate={milaRate}
               valeraRate={valeraRate}
               expenses={expenses}
@@ -353,6 +465,10 @@ export default function MonthView() {
               selectedYear={selectedYear}
               rows={milaRows}
               setRows={setMilaRows}
+              externalRows={externalMilaRows}
+              onUpdateExternalRow={(storageMonthKey, rowId, patch) =>
+                handleUpdateExternalRow('milaRows', storageMonthKey, rowId, patch)
+              }
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
               carriedAdvanceFromPrev={carriedAdvanceFromPrev}
@@ -373,6 +489,10 @@ export default function MonthView() {
               selectedYear={selectedYear}
               rows={valeraRows}
               setRows={setValeraRows}
+              externalRows={externalValeraRows}
+              onUpdateExternalRow={(storageMonthKey, rowId, patch) =>
+                handleUpdateExternalRow('valeraRows', storageMonthKey, rowId, patch)
+              }
               exchangeRate={valeraRate}
               setExchangeRate={setValeraRate}
               shoesCatalog={shoesCatalog}

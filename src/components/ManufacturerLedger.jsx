@@ -27,6 +27,23 @@ const UKRAINIAN_MONTH_MAP = {
   'грудня': '12'
 };
 
+const MONTH_OPTIONS_UKR = [
+  { mm: '01', label: '01 (Січ)' },
+  { mm: '02', label: '02 (Лют)' },
+  { mm: '03', label: '03 (Бер)' },
+  { mm: '04', label: '04 (Квіт)' },
+  { mm: '05', label: '05 (Трав)' },
+  { mm: '06', label: '06 (Черв)' },
+  { mm: '07', label: '07 (Лип)' },
+  { mm: '08', label: '08 (Серп)' },
+  { mm: '09', label: '09 (Вер)' },
+  { mm: '10', label: '10 (Жовт)' },
+  { mm: '11', label: '11 (Лист)' },
+  { mm: '12', label: '12 (Груд)' }
+];
+
+const DAYS_IN_MONTH_LIST = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
+
 function getLocalTodayISO() {
   const now = new Date();
   const y = now.getFullYear();
@@ -86,6 +103,19 @@ function formatDayMonth(val) {
   return trimmed;
 }
 
+function splitDM(dmStr, fallbackMonthKey) {
+  const clean = formatDayMonth(dmStr || '');
+  const match = clean.match(/^(\d{1,2})\.(\d{1,2})$/);
+  if (match) {
+    return {
+      dd: String(Math.min(31, Math.max(1, Number(match[1]) || 1))).padStart(2, '0'),
+      mm: String(Math.min(12, Math.max(1, Number(match[2]) || 1))).padStart(2, '0')
+    };
+  }
+  const [, fallbackMM] = String(fallbackMonthKey || '2026-08').split('-');
+  return { dd: '01', mm: fallbackMM || '08' };
+}
+
 function parseManualDateToISO(inputStr, activeMonth, fallbackYear) {
   const clean = String(inputStr || '').trim();
   const [yearPart, monthPart] = activeMonth.split('-');
@@ -137,10 +167,7 @@ function getNextSequentialDate(existingMonthRows, activeMonth, fallbackYear) {
   };
 }
 
-function getMonthFromRow(row, fallbackMonth, fallbackYear) {
-  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
-    return String(row.month);
-  }
+function getOrderMonthFromRow(row, fallbackMonth, fallbackYear) {
   if (row?.isoDate && typeof row.isoDate === 'string' && row.isoDate.includes('-')) {
     const parts = row.isoDate.split('-');
     if (parts.length >= 2) {
@@ -153,10 +180,13 @@ function getMonthFromRow(row, fallbackMonth, fallbackYear) {
       return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
     }
   }
+  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
+    return String(row.month);
+  }
   return fallbackMonth;
 }
 
-function getPaidMonthFromRow(row, fallbackYear) {
+function getPaidMonthFromRow(row, fallbackMonth, fallbackYear) {
   if (row?.paidMonth && /^\d{4}-\d{2}$/.test(String(row.paidMonth))) {
     return String(row.paidMonth);
   }
@@ -173,7 +203,7 @@ function getPaidMonthFromRow(row, fallbackYear) {
       return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
     }
   }
-  return getMonthFromRow(row, `${fallbackYear}-08`, fallbackYear);
+  return getOrderMonthFromRow(row, fallbackMonth, fallbackYear);
 }
 
 export default function ManufacturerLedger(props) {
@@ -189,6 +219,8 @@ export default function ManufacturerLedger(props) {
     currentYear: propCurrentYear,
     rows = [],
     setRows = () => {},
+    externalRows = [],
+    onUpdateExternalRow = null,
     depositsList = [],
     setDepositsList = () => {},
     carriedAdvanceFromPrev = 0,
@@ -214,56 +246,85 @@ export default function ManufacturerLedger(props) {
   const [, activeMM] = activeMonth.split('-');
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  const [newDepositDateText, setNewDepositDateText] = useState(`01.${activeMM}`);
+  const [newDepositDay, setNewDepositDay] = useState('01');
+  const [newDepositMonth, setNewDepositMonth] = useState(activeMM);
   const [newDepositAmount, setNewDepositAmount] = useState('');
   const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
 
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
-  const [paymentDateInput, setPaymentDateInput] = useState(`01.${activeMM}`);
+  const [paymentDay, setPaymentDay] = useState('01');
+  const [paymentMonthMM, setPaymentMonthMM] = useState(activeMM);
 
   const rowRefs = useRef({});
 
   useEffect(() => {
     const [, mm] = activeMonth.split('-');
-    setNewDepositDateText(`01.${mm || '08'}`);
+    const safeMM = mm || '08';
+    setNewDepositDay('01');
+    setNewDepositMonth(safeMM);
     setActivatedSubtotalId(null);
-    setPaymentDateInput(`01.${mm || '08'}`);
+    setPaymentDay('01');
+    setPaymentMonthMM(safeMM);
   }, [activeMonth]);
 
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Перенесений залишок авансу з попередніх місяців
   const carriedAdvanceBalance = Number(carriedAdvanceFromPrev) || 0;
 
-  // 1. Всі рядки, які вже належать цьому місяцю (включно зі старими записами без поля month)
+  // 1. Рядки, створені у поточному місяці (за датою створення)
   const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
-    if (!r.month && !r.isoDate) return true;
-    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    return rowMonth === activeMonth;
+    const orderMonth = getOrderMonthFromRow(r, activeMonth, resolvedYear);
+    return orderMonth === activeMonth;
   });
 
-  // 2. Неоплачені пари з попередніх місяців (перетягуються в поточний, поки не оплачені)
-  const carriedUnpaidRows = rows.filter((r) => {
+  // 2. Власні рядки, які показуються в цьому місяці (неоплачені або оплачені саме в цьому місяці)
+  const visibleOwnRows = currentMonthOwnRows.filter((r) => {
+    if (r.type !== 'item' || !r.isPaid || r.isEditing) return true;
+    const paidMonth = getPaidMonthFromRow(r, activeMonth, resolvedYear);
+    return paidMonth === activeMonth;
+  });
+
+  // 3. Неоплачені пари з попередніх місяців (переносяться далі, поки не оплачені)
+  const unpaidCarriedFromPrev = externalRows.filter((r) => {
     if (r.type !== 'item' || r.isPaid || r.isEditing) return false;
-    if (!r.month && !r.isoDate) return false;
-    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    return rowMonth < activeMonth;
+    const storageM = r._storageMonthKey || activeMonth;
+    const orderMonth = getOrderMonthFromRow(r, storageM, resolvedYear);
+    return orderMonth < activeMonth;
   });
 
-  const monthRows = [...carriedUnpaidRows, ...currentMonthOwnRows];
+  // 4. Пари з інших місяців, оплачені саме датою цього місяця (переносяться в місяць оплати)
+  const paidInThisMonthFromOtherMonths = externalRows.filter((r) => {
+    if (r.type !== 'item' || !r.isPaid || r.isEditing) return false;
+    const storageM = r._storageMonthKey || activeMonth;
+    const orderMonth = getOrderMonthFromRow(r, storageM, resolvedYear);
+    const paidMonth = getPaidMonthFromRow(r, storageM, resolvedYear);
+    return paidMonth === activeMonth && orderMonth !== activeMonth;
+  });
 
-  // Оплачені рядки, дата оплати яких у поточному місяці
-  const monthPaidRows = rows.filter((r) => {
-    if (r.type !== 'item' || !r.isPaid) return false;
-    return getPaidMonthFromRow(r, resolvedYear) === activeMonth;
+  const monthRows = [
+    ...unpaidCarriedFromPrev,
+    ...paidInThisMonthFromOtherMonths,
+    ...visibleOwnRows
+  ];
+
+  // Всі оплачені пари саме в цьому місяці (за датою оплати)
+  const allCombinedItems = [
+    ...rows.filter((r) => r.type === 'item'),
+    ...externalRows.filter((r) => r.type === 'item')
+  ];
+
+  const monthPaidRows = allCombinedItems.filter((r) => {
+    if (!r.isPaid) return false;
+    const fallbackM = r._storageMonthKey || activeMonth;
+    return getPaidMonthFromRow(r, fallbackM, resolvedYear) === activeMonth;
   });
 
   const monthDeposits = depositsList.filter((d) => {
-    const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
+    const depMonth = getOrderMonthFromRow(d, activeMonth, resolvedYear);
     return depMonth === activeMonth;
   });
 
@@ -317,9 +378,9 @@ export default function ManufacturerLedger(props) {
     const numericAmount = Number(newDepositAmount);
     if (!newDepositAmount || Number.isNaN(numericAmount) || numericAmount <= 0) return;
 
-    const chosenISO = parseManualDateToISO(newDepositDateText, activeMonth, resolvedYear);
-    const depMonth = getMonthFromRow({ isoDate: chosenISO }, activeMonth, resolvedYear);
-    const formattedDM = formatDayMonth(newDepositDateText) || formatDayMonth(chosenISO);
+    const formattedDM = `${newDepositDay}.${newDepositMonth}`;
+    const chosenISO = `${resolvedYear}-${newDepositMonth}-${newDepositDay}`;
+    const depMonth = `${resolvedYear}-${newDepositMonth}`;
 
     const item = {
       id: Date.now(),
@@ -342,6 +403,25 @@ export default function ManufacturerLedger(props) {
       setActivatedSubtotalId(null);
     }
 
+    const externalTarget = externalRows.find((r) => r.id === id);
+    if (externalTarget && onUpdateExternalRow) {
+      const patch = { [field]: value };
+      if (field === 'date') {
+        const parsedISO = parseManualDateToISO(value, activeMonth, resolvedYear);
+        patch.isoDate = parsedISO;
+        patch.month = getOrderMonthFromRow({ isoDate: parsedISO }, activeMonth, resolvedYear);
+      }
+      if (field === 'shoeId' && value) {
+        const found = shoesCatalog.find((s) => s.id === value);
+        if (found) {
+          patch.customCostUSD = found.defaultCostUSD;
+          patch.photo = found.photo || '';
+        }
+      }
+      onUpdateExternalRow(externalTarget._storageMonthKey, id, patch);
+      return;
+    }
+
     setRows(
       rows.map((row) => {
         if (row.id === id) {
@@ -350,12 +430,12 @@ export default function ManufacturerLedger(props) {
           if (field === 'date') {
             const parsedISO = parseManualDateToISO(value, activeMonth, resolvedYear);
             updated.isoDate = parsedISO;
-            updated.month = getMonthFromRow({ isoDate: parsedISO }, activeMonth, resolvedYear);
+            updated.month = getOrderMonthFromRow({ isoDate: parsedISO }, activeMonth, resolvedYear);
           }
 
           if (field === 'isoDate' && value) {
             updated.date = formatDayMonth(value);
-            updated.month = getMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
+            updated.month = getOrderMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
           }
 
           if (field === 'shoeId' && value) {
@@ -376,6 +456,18 @@ export default function ManufacturerLedger(props) {
 
   const selectShoeFromPicker = (shoe) => {
     if (!activeRowForPicker) return;
+
+    const externalTarget = externalRows.find((r) => r.id === activeRowForPicker);
+    if (externalTarget && onUpdateExternalRow) {
+      onUpdateExternalRow(externalTarget._storageMonthKey, activeRowForPicker, {
+        shoeId: shoe.id,
+        customCostUSD: shoe.defaultCostUSD,
+        photo: shoe.photo || ''
+      });
+      setActiveRowForPicker(null);
+      return;
+    }
+
     setRows(
       rows.map((row) => {
         if (row.id === activeRowForPicker) {
@@ -394,6 +486,11 @@ export default function ManufacturerLedger(props) {
   };
 
   const handleDeleteRow = (id) => {
+    const externalTarget = externalRows.find((r) => r.id === id);
+    if (externalTarget && onUpdateExternalRow) {
+      onUpdateExternalRow(externalTarget._storageMonthKey, id, null);
+      return;
+    }
     setRows(rows.filter((row) => row.id !== id));
   };
 
@@ -485,27 +582,26 @@ export default function ManufacturerLedger(props) {
     const finalAmountUAH = getSubtotalFinalUAH(activatedSubtotalId);
     const diffUAH = finalAmountUAH - checkedCalculatedUAH;
 
-    const paidISO = parseManualDateToISO(
-      paymentDateInput || formatDayMonth(todayISO),
-      activeMonth,
-      resolvedYear
+    const safeDay = paymentDay || '01';
+    const safeMM = paymentMonthMM || activeMM;
+    const paidDM = `${safeDay}.${safeMM}`;
+    const paidISO = `${resolvedYear}-${safeMM}-${safeDay}`;
+    const paidM = `${resolvedYear}-${safeMM}`;
+
+    const allTargetRows = monthRows.filter(
+      (r) => r.type === 'item' && !r.isPaid && r.isSelectedForPay
     );
-    const paidDM = formatDayMonth(paymentDateInput) || formatDayMonth(paidISO);
-    const paidM = getMonthFromRow({ isoDate: paidISO }, activeMonth, resolvedYear);
+    const firstTargetId = allTargetRows[0]?.id;
 
-    setRows((prevRows) => {
-      const targetIds = prevRows
-        .filter((r) => r.type === 'item' && !r.isPaid && r.isSelectedForPay)
-        .map((r) => r.id);
-
-      const firstId = targetIds[0];
-
-      return prevRows.map((r) => {
-        if (targetIds.includes(r.id)) {
-          const adjust = r.id === firstId ? diffUAH : 0;
+    // 1. Оновлюємо рядки, створені у поточному місяці (місяць створення row.month не змінюємо!)
+    setRows((prevRows) =>
+      prevRows.map((r) => {
+        if (allTargetRows.some((t) => t.id === r.id)) {
+          const adjust = r.id === firstTargetId ? diffUAH : 0;
+          const nativeOrderMonth = getOrderMonthFromRow(r, activeMonth, resolvedYear);
           return {
             ...r,
-            month: paidM,
+            month: nativeOrderMonth,
             patternCostUAH: (Number(r.patternCostUAH) || 0) + adjust,
             isPaid: true,
             paySource: chosenSource,
@@ -520,7 +616,6 @@ export default function ManufacturerLedger(props) {
         if (r.id === activatedSubtotalId && r.type === 'subtotal') {
           return {
             ...r,
-            month: paidM,
             isPaid: true,
             paidAmountUAH: finalAmountUAH,
             paySource: chosenSource,
@@ -531,8 +626,28 @@ export default function ManufacturerLedger(props) {
           };
         }
         return r;
+      })
+    );
+
+    // 2. Оновлюємо перенесені з інших місяців пари у їхньому місяці зберігання
+    if (onUpdateExternalRow) {
+      allTargetRows.forEach((t) => {
+        if (t._storageMonthKey) {
+          const adjust = t.id === firstTargetId ? diffUAH : 0;
+          onUpdateExternalRow(t._storageMonthKey, t.id, {
+            patternCostUAH: (Number(t.patternCostUAH) || 0) + adjust,
+            isPaid: true,
+            paySource: chosenSource,
+            isSelectedForPay: false,
+            paidDate: paidDM,
+            paidIsoDate: paidISO,
+            paidMonth: paidM,
+            paidAt: paidDM,
+            isEditing: false
+          });
+        }
       });
-    });
+    }
 
     if (activatedSubtotalId) {
       setManualSubtotalAmounts((prev) => {
@@ -834,24 +949,42 @@ export default function ManufacturerLedger(props) {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    placeholder={`ДД.${activeMM}`}
-                    value={newDepositDateText}
-                    onChange={(e) => setNewDepositDateText(e.target.value)}
+                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    value={newDepositDay}
+                    onChange={(e) => setNewDepositDay(e.target.value)}
                     style={{
-                      width: '64px',
-                      flexShrink: 0,
-                      padding: '0.25rem 0.4rem',
+                      padding: '0.25rem 0.25rem',
                       fontSize: '0.75rem',
                       border: '1px solid #d1d5db',
                       borderRadius: '0.35rem',
                       fontWeight: '700',
-                      textAlign: 'center'
+                      background: '#fff'
                     }}
-                    title="Дата вручну ДД.ММ"
-                  />
+                    title="День поповнення авансу"
+                  >
+                    {DAYS_IN_MONTH_LIST.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={newDepositMonth}
+                    onChange={(e) => setNewDepositMonth(e.target.value)}
+                    style={{
+                      padding: '0.25rem 0.25rem',
+                      fontSize: '0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.35rem',
+                      fontWeight: '700',
+                      background: '#fff'
+                    }}
+                    title="Місяць поповнення авансу"
+                  >
+                    {MONTH_OPTIONS_UKR.map((m) => (
+                      <option key={m.mm} value={m.mm}>{m.mm}</option>
+                    ))}
+                  </select>
 
                   <input
                     type="number"
@@ -865,7 +998,7 @@ export default function ManufacturerLedger(props) {
                       }
                     }}
                     style={{
-                      minWidth: 0,
+                      minWidth: '75px',
                       flex: 1,
                       padding: '0.25rem 0.45rem',
                       fontSize: '0.75rem',
@@ -1053,7 +1186,7 @@ export default function ManufacturerLedger(props) {
                   ✓
                 </th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.4rem', width: '82px' }}>Дата зам.</th>
+                <th style={{ padding: '0.6rem 0.4rem', width: '108px' }}>Дата зам.</th>
                 <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
@@ -1314,8 +1447,12 @@ export default function ManufacturerLedger(props) {
                 const isChecked = Boolean(row.isSelectedForPay);
                 const paySource = row.paySource || 'advance';
 
-                const rowMonth = getMonthFromRow(row, activeMonth, resolvedYear);
-                const isCarriedUnpaidFromPrev = !isPaid && rowMonth < activeMonth;
+                const rowOrderMonth = getOrderMonthFromRow(
+                  row,
+                  row._storageMonthKey || activeMonth,
+                  resolvedYear
+                );
+                const isFromOtherMonth = rowOrderMonth !== activeMonth;
 
                 const rowUSD = qty * costUSD;
                 const shoePartUAH = rowUSD * rRate;
@@ -1324,7 +1461,8 @@ export default function ManufacturerLedger(props) {
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
-                const displayDate = row.date || formatDayMonth(row.isoDate) || '';
+                const displayDate = row.date || formatDayMonth(row.isoDate) || `01.${activeMM}`;
+                const { dd: rowDay, mm: rowMM } = splitDM(displayDate, rowOrderMonth);
                 const displayPaidDate = row.paidDate || row.paidAt || '';
 
                 return (
@@ -1336,7 +1474,7 @@ export default function ManufacturerLedger(props) {
                         ? '#f1f5f9'
                         : isChecked
                         ? '#eef2ff'
-                        : isCarriedUnpaidFromPrev
+                        : isFromOtherMonth
                         ? '#fff7ed'
                         : '#ffffff',
                       color: isPaid ? '#64748b' : '#0f172a',
@@ -1383,27 +1521,65 @@ export default function ManufacturerLedger(props) {
 
                     <td style={{ padding: '0.5rem 0.35rem' }}>
                       {isPaid ? (
-                        <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                          <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
+                          {isFromOtherMonth && (
+                            <span
+                              style={{
+                                fontSize: '0.62rem',
+                                fontWeight: '700',
+                                color: '#64748b'
+                              }}
+                            >
+                              зам. {rowOrderMonth.slice(5, 7)}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <input
-                            type="text"
-                            value={displayDate}
-                            onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
-                            placeholder={`ДД.${activeMM}`}
-                            style={{
-                              width: '66px',
-                              padding: '0.25rem 0.35rem',
-                              border: '1px solid #cbd5e1',
-                              borderRadius: '0.35rem',
-                              fontSize: '0.8rem',
-                              fontWeight: '700',
-                              textAlign: 'center',
-                              background: '#fff'
-                            }}
-                            title="Дата замовлення вручну ДД.ММ"
-                          />
-                          {isCarriedUnpaidFromPrev && (
+                          <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
+                            <select
+                              value={rowDay}
+                              onChange={(e) =>
+                                handleRowChange(row.id, 'date', `${e.target.value}.${rowMM}`)
+                              }
+                              style={{
+                                padding: '0.22rem 0.15rem',
+                                border: '1px solid #cbd5e1',
+                                borderRadius: '0.35rem',
+                                fontSize: '0.78rem',
+                                fontWeight: '700',
+                                background: '#fff'
+                              }}
+                              title="День замовлення"
+                            >
+                              {DAYS_IN_MONTH_LIST.map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                              ))}
+                            </select>
+
+                            <select
+                              value={rowMM}
+                              onChange={(e) =>
+                                handleRowChange(row.id, 'date', `${rowDay}.${e.target.value}`)
+                              }
+                              style={{
+                                padding: '0.22rem 0.15rem',
+                                border: '1px solid #cbd5e1',
+                                borderRadius: '0.35rem',
+                                fontSize: '0.78rem',
+                                fontWeight: '700',
+                                background: '#fff'
+                              }}
+                              title="Місяць створення пари"
+                            >
+                              {MONTH_OPTIONS_UKR.map((m) => (
+                                <option key={m.mm} value={m.mm}>{m.mm}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {isFromOtherMonth && (
                             <span
                               style={{
                                 fontSize: '0.64rem',
@@ -1415,7 +1591,7 @@ export default function ManufacturerLedger(props) {
                                 textAlign: 'center'
                               }}
                             >
-                              з {rowMonth.slice(5, 7)}
+                              з {rowOrderMonth.slice(5, 7)}
                             </span>
                           )}
                         </div>
@@ -1737,7 +1913,7 @@ export default function ManufacturerLedger(props) {
           </table>
         </div>
 
-        {/* НИЖНЯ ПАНЕЛЬ З ДАТОЮ ОПЛАТИ, ВИБОРОМ ДЖЕРЕЛА ТА КНОПКОЮ */}
+        {/* НИЖНЯ ПАНЕЛЬ З ВИБОРОМ ДАТИ ОПЛАТИ ЗІ СПИСКУ, ДЖЕРЕЛОМ ТА КНОПКОЮ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1780,7 +1956,7 @@ export default function ManufacturerLedger(props) {
               Неоплачено: {unpaidUAH.toFixed(0)} грн
             </div>
 
-            <label
+            <div
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -1793,26 +1969,46 @@ export default function ManufacturerLedger(props) {
                 borderRadius: '0.45rem',
                 border: '1px solid #cbd5e1'
               }}
-              title="Вкажи дату оплати перед підтвердженням"
+              title="Обери зі списку день і місяць оплати — пара перенесеться у вибраний місяць оплати"
             >
               <span>Дата опл.:</span>
-              <input
-                type="text"
-                value={paymentDateInput}
-                onChange={(e) => setPaymentDateInput(e.target.value)}
-                placeholder={`ДД.${activeMM}`}
+              <select
+                value={paymentDay}
+                onChange={(e) => setPaymentDay(e.target.value)}
                 style={{
-                  width: '56px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.3rem',
+                  padding: '0.15rem 0.25rem',
+                  fontSize: '0.78rem',
+                  fontWeight: '800',
+                  background: '#ffffff',
+                  cursor: 'pointer'
+                }}
+              >
+                {DAYS_IN_MONTH_LIST.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+
+              <select
+                value={paymentMonthMM}
+                onChange={(e) => setPaymentMonthMM(e.target.value)}
+                style={{
                   border: '1px solid #cbd5e1',
                   borderRadius: '0.3rem',
                   padding: '0.15rem 0.3rem',
                   fontSize: '0.78rem',
                   fontWeight: '800',
-                  textAlign: 'center',
-                  background: '#ffffff'
+                  background: '#ffffff',
+                  color: '#4f46e5',
+                  cursor: 'pointer'
                 }}
-              />
-            </label>
+              >
+                {MONTH_OPTIONS_UKR.map((m) => (
+                  <option key={m.mm} value={m.mm}>{m.label}</option>
+                ))}
+              </select>
+            </div>
 
             <div
               style={{
