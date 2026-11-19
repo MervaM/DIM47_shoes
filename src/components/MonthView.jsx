@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ManufacturerLedger from './ManufacturerLedger';
 import SummaryView from './SummaryView';
 import ShoesCardsView from './ShoesCardsView';
@@ -70,7 +70,6 @@ function getRowPaidMonth(row, fallbackMonthKey) {
 
 /**
  * Рахує перенесений залишок авансу ланцюжком з усіх попередніх місяців до targetMonthKey
- * (липень -> серпень -> вересень -> жовтень -> листопад і далі)
  */
 function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
   const keysSet = new Set(Object.keys(allMonthsMap || {}));
@@ -94,11 +93,9 @@ function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
     const parts = key.split('-');
     const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
 
-    // 1. Внесені аванси цього місяця
     const mDeposits = getDepositsForMonth(mData, key, mIdx);
     const monthDepositsSum = mDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
-    // 2. Оплати "з авансу", проведені датою цього місяця (з будь-якого місяця замовлення)
     let monthPaidFromAdvanceUAH = 0;
 
     Object.keys(allMonthsMap || {}).forEach((sourceKey) => {
@@ -145,6 +142,32 @@ function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   return result;
 }
 
+function buildMonthPayload({
+  milaDepositsList,
+  milaInitialDebt,
+  milaRate,
+  milaRows,
+  valeraRate,
+  valeraRows,
+  expenses
+}) {
+  const depositsTotal = (milaDepositsList || []).reduce(
+    (sum, d) => sum + (Number(d.amount) || 0),
+    0
+  );
+
+  return {
+    milaDepositsList: milaDepositsList || [],
+    milaDeposit: depositsTotal,
+    milaInitialDebt: milaInitialDebt ?? 0,
+    milaRate: milaRate ?? 45.0,
+    milaRows: milaRows || [],
+    valeraRate: valeraRate ?? 45.0,
+    valeraRows: valeraRows || [],
+    expenses: expenses || []
+  };
+}
+
 export default function MonthView() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -169,13 +192,101 @@ export default function MonthView() {
 
   const canAutoSave = useRef(false);
   const catalogDirty = useRef(false);
+  const loadedMonthKeyRef = useRef(null);
+  const latestMonthPayloadRef = useRef(null);
+  const latestCatalogRef = useRef([]);
 
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
+
+  useEffect(() => {
+    latestCatalogRef.current = shoesCatalog;
+  }, [shoesCatalog]);
+
+  useEffect(() => {
+    latestMonthPayloadRef.current = buildMonthPayload({
+      milaDepositsList,
+      milaInitialDebt,
+      milaRate,
+      milaRows,
+      valeraRate,
+      valeraRows,
+      expenses
+    });
+  }, [
+    milaDepositsList,
+    milaInitialDebt,
+    milaRate,
+    milaRows,
+    valeraRate,
+    valeraRows,
+    expenses
+  ]);
+
+  const persistMonthToSupabase = useCallback(async (targetKey, monthObj, overrideCatalog) => {
+    if (!targetKey || !monthObj) return;
+
+    setSyncStatus('saving');
+
+    const { data: existingData, error: readError } = await supabase
+      .from('app_state')
+      .select('data')
+      .eq('id', 1)
+      .maybeSingle();
+
+    if (readError) {
+      console.error('Помилка читання перед збереженням:', readError);
+      setSyncStatus('error');
+      return;
+    }
+
+    const currentRoot = existingData?.data || {};
+    const nextMonths = {
+      ...(currentRoot.months || {}),
+      [targetKey]: monthObj
+    };
+
+    const nextCatalog =
+      overrideCatalog !== undefined
+        ? overrideCatalog
+        : catalogDirty.current
+        ? latestCatalogRef.current
+        : currentRoot.shoesCatalog ?? latestCatalogRef.current;
+
+    const payloadToSave = {
+      ...currentRoot,
+      shoesCatalog: nextCatalog,
+      months: nextMonths
+    };
+
+    const { error: writeError } = await supabase
+      .from('app_state')
+      .upsert({ id: 1, data: payloadToSave });
+
+    if (writeError) {
+      console.error('Помилка збереження:', writeError);
+      setSyncStatus('error');
+    } else {
+      if (overrideCatalog !== undefined || catalogDirty.current) {
+        catalogDirty.current = false;
+      }
+      setAllMonthsMap(nextMonths);
+      setSyncStatus('saved');
+    }
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
 
     async function loadDataForMonth() {
+      // Якщо ми вже працювали з попереднім місяцем — зберігаємо його одразу перед перемиканням
+      const prevKey = loadedMonthKeyRef.current;
+      const prevPayload = latestMonthPayloadRef.current;
+      if (prevKey && prevKey !== monthKey && prevPayload) {
+        await persistMonthToSupabase(prevKey, prevPayload);
+      }
+
+      if (isCancelled) return;
+
       canAutoSave.current = false;
       setIsLoading(true);
       setSyncStatus('loading');
@@ -198,26 +309,44 @@ export default function MonthView() {
       const rootData = data?.data || {};
       const allMonthsData = rootData.months || {};
       const monthData = allMonthsData[monthKey] || {};
-      const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
+      const mIdx = Math.max(0, Number(monthKey.split('-')[1] || 1) - 1);
+      const loadedDeposits = getDepositsForMonth(monthData, monthKey, mIdx);
+      const loadedInitDebt = monthData.milaInitialDebt ?? 0;
+      const loadedMilaRate = monthData.milaRate ?? 45.0;
+      const loadedMilaRows = Array.isArray(monthData.milaRows) ? monthData.milaRows : [];
+      const loadedValeraRate = monthData.valeraRate ?? 45.0;
+      const loadedValeraRows = Array.isArray(monthData.valeraRows) ? monthData.valeraRows : [];
+      const loadedExpenses = Array.isArray(monthData.expenses) ? monthData.expenses : [];
+      const loadedCatalog = Array.isArray(rootData.shoesCatalog) ? rootData.shoesCatalog : [];
 
       setAllMonthsMap(allMonthsData);
       setMilaDepositsList(loadedDeposits);
-      setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
-      setMilaRate(monthData.milaRate ?? 45.0);
-      setMilaRows(Array.isArray(monthData.milaRows) ? monthData.milaRows : []);
-      setValeraRate(monthData.valeraRate ?? 45.0);
-      setValeraRows(Array.isArray(monthData.valeraRows) ? monthData.valeraRows : []);
-      setExpenses(Array.isArray(monthData.expenses) ? monthData.expenses : []);
+      setMilaInitialDebt(loadedInitDebt);
+      setMilaRate(loadedMilaRate);
+      setMilaRows(loadedMilaRows);
+      setValeraRate(loadedValeraRate);
+      setValeraRows(loadedValeraRows);
+      setExpenses(loadedExpenses);
+      setShoesCatalog(loadedCatalog);
+      latestCatalogRef.current = loadedCatalog;
 
-      if (Array.isArray(rootData.shoesCatalog)) {
-        setShoesCatalog(rootData.shoesCatalog);
-      }
+      latestMonthPayloadRef.current = buildMonthPayload({
+        milaDepositsList: loadedDeposits,
+        milaInitialDebt: loadedInitDebt,
+        milaRate: loadedMilaRate,
+        milaRows: loadedMilaRows,
+        valeraRate: loadedValeraRate,
+        valeraRows: loadedValeraRows,
+        expenses: loadedExpenses
+      });
+
+      loadedMonthKeyRef.current = monthKey;
 
       setSyncStatus('saved');
       setIsLoading(false);
       setTimeout(() => {
         if (!isCancelled) canAutoSave.current = true;
-      }, 150);
+      }, 100);
     }
 
     loadDataForMonth();
@@ -225,23 +354,23 @@ export default function MonthView() {
     return () => {
       isCancelled = true;
     };
-  }, [monthKey, selectedMonth]);
+  }, [monthKey, persistMonthToSupabase]);
 
+  // Автозбереження при змінах усередині поточного місяця
   useEffect(() => {
     if (isLoading || !canAutoSave.current) return;
 
-    const depositsTotal = milaDepositsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-    const updatedMonthObj = {
+    const updatedMonthObj = buildMonthPayload({
       milaDepositsList,
-      milaDeposit: depositsTotal,
       milaInitialDebt,
       milaRate,
       milaRows,
       valeraRate,
       valeraRows,
       expenses
-    };
+    });
+
+    latestMonthPayloadRef.current = updatedMonthObj;
 
     setAllMonthsMap((prev) => ({
       ...prev,
@@ -251,42 +380,9 @@ export default function MonthView() {
     setSyncStatus('saving');
     const currentMonthKey = monthKey;
 
-    const timer = setTimeout(async () => {
-      const { data: existingData } = await supabase
-        .from('app_state')
-        .select('data')
-        .eq('id', 1)
-        .maybeSingle();
-
-      const currentRoot = existingData?.data || {};
-      const nextMonths = {
-        ...(currentRoot.months || {}),
-        [currentMonthKey]: updatedMonthObj
-      };
-
-      const nextCatalog = catalogDirty.current
-        ? shoesCatalog
-        : (currentRoot.shoesCatalog ?? shoesCatalog);
-
-      const payloadToSave = {
-        ...currentRoot,
-        shoesCatalog: nextCatalog,
-        months: nextMonths
-      };
-
-      const { error } = await supabase
-        .from('app_state')
-        .upsert({ id: 1, data: payloadToSave });
-
-      if (error) {
-        console.error('Помилка збереження:', error);
-        setSyncStatus('error');
-      } else {
-        catalogDirty.current = false;
-        setAllMonthsMap(nextMonths);
-        setSyncStatus('saved');
-      }
-    }, 600);
+    const timer = setTimeout(() => {
+      persistMonthToSupabase(currentMonthKey, updatedMonthObj);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [
@@ -299,12 +395,20 @@ export default function MonthView() {
     expenses,
     shoesCatalog,
     monthKey,
-    isLoading
+    isLoading,
+    persistMonthToSupabase
   ]);
 
   const handleSetShoesCatalog = (updater) => {
     catalogDirty.current = true;
-    setShoesCatalog(updater);
+    setShoesCatalog((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      latestCatalogRef.current = next;
+      if (latestMonthPayloadRef.current) {
+        persistMonthToSupabase(monthKey, latestMonthPayloadRef.current, next);
+      }
+      return next;
+    });
   };
 
   const handleUpdateExternalRow = async (fieldName, storageMonthKey, rowId, patchOrDelete) => {
@@ -328,32 +432,7 @@ export default function MonthView() {
     };
     setAllMonthsMap(nextAllMonths);
 
-    setSyncStatus('saving');
-    const { data: existingData } = await supabase
-      .from('app_state')
-      .select('data')
-      .eq('id', 1)
-      .maybeSingle();
-
-    const currentRoot = existingData?.data || {};
-    const payloadToSave = {
-      ...currentRoot,
-      months: {
-        ...(currentRoot.months || {}),
-        [storageMonthKey]: {
-          ...((currentRoot.months || {})[storageMonthKey] || targetMonthObj),
-          [fieldName]: nextList
-        }
-      }
-    };
-
-    const { error } = await supabase.from('app_state').upsert({ id: 1, data: payloadToSave });
-    if (error) {
-      console.error('Помилка оновлення перенесеного рядка:', error);
-      setSyncStatus('error');
-    } else {
-      setSyncStatus('saved');
-    }
+    await persistMonthToSupabase(storageMonthKey, nextTargetMonthObj);
   };
 
   const carriedAdvanceFromPrev = calculateChainedAdvance(allMonthsMap, monthKey);
