@@ -289,6 +289,11 @@ export default function MonthView() {
     latestDepositsRef.current = [];
     setMilaManualRemaining(null);
     setMilaInitialDebt(0);
+
+    const cleanedCurrentMilaRows = (milaRows || []).map((r) =>
+      r.isPaid && r.paySource !== 'separate' ? { ...r, paySource: 'separate' } : r
+    );
+    setMilaRows(cleanedCurrentMilaRows);
     setSyncStatus('saving');
 
     const task = writeQueueRef.current.then(async () => {
@@ -309,8 +314,18 @@ export default function MonthView() {
       const cleanedMonths = {};
 
       Object.keys(rawMonths).forEach((k) => {
+        const mObj = rawMonths[k] || {};
+        const cleanedRows = Array.isArray(mObj.milaRows)
+          ? mObj.milaRows.map((r) =>
+              r && r.isPaid && r.paySource !== 'separate'
+                ? { ...r, paySource: 'separate' }
+                : r
+            )
+          : [];
+
         cleanedMonths[k] = {
-          ...rawMonths[k],
+          ...mObj,
+          milaRows: cleanedRows,
           milaDepositsList: [],
           milaDeposit: 0,
           milaManualRemaining: null,
@@ -323,7 +338,7 @@ export default function MonthView() {
         milaManualRemaining: null,
         milaInitialDebt: 0,
         milaRate,
-        milaRows,
+        milaRows: cleanedCurrentMilaRows,
         valeraRate,
         valeraRows,
         expenses
@@ -581,6 +596,14 @@ export default function MonthView() {
     return depMonth < monthKey ? sum + (Number(dep.amount) || 0) : sum;
   }, 0);
 
+  const hasAnyDepositsBefore = globalMilaDeposits.some((dep) => {
+    const depMonth =
+      dep.isoDate && /^\d{4}-\d{2}/.test(dep.isoDate)
+        ? dep.isoDate.slice(0, 7)
+        : dep.month || monthKey;
+    return depMonth < monthKey;
+  });
+
   const advanceSpentBeforeCurrentMonth = allMilaItemsAcrossMonths.reduce((sum, r) => {
     if (!r.isPaid || r.paySource === 'separate') return sum;
     const paidM = getRowPaidMonth(r, r._storageMonthKey || monthKey);
@@ -594,7 +617,9 @@ export default function MonthView() {
     return sum;
   }, 0);
 
-  const carriedAdvanceFromPrev = depositsBeforeCurrentMonth - advanceSpentBeforeCurrentMonth;
+  const carriedAdvanceFromPrev = hasAnyDepositsBefore
+    ? depositsBeforeCurrentMonth - advanceSpentBeforeCurrentMonth
+    : 0;
 
   const milaOrderedThisMonth = milaRows.filter(
     (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
