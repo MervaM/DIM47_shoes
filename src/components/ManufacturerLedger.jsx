@@ -1,15 +1,12 @@
 import React, { useState, useRef } from 'react';
 
-// Приводить будь-яку дату (YYYY-MM-DD або ДД.ММ.РРРР) до формату ДД.ММ
 function formatDayMonth(val) {
   if (!val || typeof val !== 'string') return '';
   const trimmed = val.trim();
-  // Якщо ISO формат YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
     const parts = trimmed.slice(0, 10).split('-');
     return `${parts[2]}.${parts[1]}`;
   }
-  // Якщо ДД.ММ.РР або ДД.ММ.РРРР
   if (/^\d{2}\.\d{2}\.\d{2,4}$/.test(trimmed)) {
     return trimmed.slice(0, 5);
   }
@@ -18,7 +15,7 @@ function formatDayMonth(val) {
 
 function getMonthFromDate(isoDate, fallbackMonth) {
   if (isoDate && typeof isoDate === 'string' && isoDate.length >= 7 && isoDate.includes('-')) {
-    return isoDate.slice(0, 7); // YYYY-MM
+    return isoDate.slice(0, 7);
   }
   return fallbackMonth;
 }
@@ -215,10 +212,10 @@ export default function ManufacturerLedger({
   let totalUAH = 0;
   let totalPatternsUAH = 0;
 
-  let selectedPairs = 0;
-  let selectedUSD = 0;
-  let selectedPatternsUAH = 0;
-  let selectedTotalUAH = 0;
+  let checkedPairs = 0;
+  let checkedUSD = 0;
+  let checkedPatternsUAH = 0;
+  let checkedTotalUAH = 0;
 
   let paidPairs = 0;
   let paidUAH = 0;
@@ -233,7 +230,7 @@ export default function ManufacturerLedger({
       const patternUAH = Number(row.patternCostUAH) || 0;
       const rRate = Number(row.rowRate) || 0;
       const isPaid = Boolean(row.isPaid);
-      const isSelected = Boolean(row.isSelectedForPay);
+      const isChecked = Boolean(row.isSelectedForPay);
 
       const rowUSD = qty * costUSD;
       const shoePartUAH = rowUSD * rRate;
@@ -244,11 +241,11 @@ export default function ManufacturerLedger({
       totalPatternsUAH += patternUAH;
       totalUAH += rowFullUAH;
 
-      if (!isPaid && isSelected) {
-        selectedPairs += qty;
-        selectedUSD += rowUSD;
-        selectedPatternsUAH += patternUAH;
-        selectedTotalUAH += rowFullUAH;
+      if (!isPaid && isChecked) {
+        checkedPairs += qty;
+        checkedUSD += rowUSD;
+        checkedPatternsUAH += patternUAH;
+        checkedTotalUAH += rowFullUAH;
       }
 
       if (isPaid) {
@@ -283,29 +280,18 @@ export default function ManufacturerLedger({
         : unpaidUAH
       : unpaidUAH;
 
-  const handlePaySelectionOrUnpaid = (forceSelectedOnly = false) => {
-    const hasSelected = selectedTotalUAH > 0;
-    if (forceSelectedOnly && !hasSelected) return;
-    if (!hasSelected && unpaidUAH <= 0) return;
+  const hasCheckedPairs = checkedTotalUAH > 0;
+  const showGreenPaidButton = !hasCheckedPairs && paidUAH > 0;
+
+  const handlePaySelectedInterval = () => {
+    if (checkedTotalUAH <= 0) return;
 
     const nowShort = formatDayMonth(todayISO);
 
-    setRows(
-      rows.map((r) => {
+    setRows((prevRows) =>
+      prevRows.map((r) => {
         const rMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
-        if (rMonth === selectedMonth && r.type === 'item' && !r.isPaid) {
-          if (hasSelected) {
-            if (r.isSelectedForPay) {
-              return {
-                ...r,
-                isPaid: true,
-                isSelectedForPay: false,
-                paidAt: nowShort,
-                isEditing: false
-              };
-            }
-            return r;
-          }
+        if (rMonth === selectedMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
           return {
             ...r,
             isPaid: true,
@@ -320,8 +306,9 @@ export default function ManufacturerLedger({
   };
 
   let runningPairNumber = 0;
-  const hasSelectedItems = selectedTotalUAH > 0;
-  const buttonAmount = hasSelectedItems ? selectedTotalUAH : unpaidUAH;
+  const formulaHint = hasCheckedPairs
+    ? `$${checkedUSD.toFixed(2)} × курс + ${checkedPatternsUAH.toFixed(0)} лекала = ${checkedTotalUAH.toFixed(0)} грн`
+    : 'Постав галочки біля пар для розрахунку проміжку';
 
   return (
     <div
@@ -591,7 +578,6 @@ export default function ManufacturerLedger({
                 </span>
 
                 <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                  {/* Відображаємо ДД.ММ + компактну кнопку календаря */}
                   <div
                     style={{
                       position: 'relative',
@@ -793,7 +779,7 @@ export default function ManufacturerLedger({
               >
                 <th
                   style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '44px' }}
-                  title="Вибрати позицію для оплати"
+                  title="Вибрати пару для оплати"
                 >
                   ✓
                 </th>
@@ -805,7 +791,7 @@ export default function ManufacturerLedger({
                   Долар ($)
                 </th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '75px' }}>Курс</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '135px' }}>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '145px' }}>
                   Вартість в грн
                 </th>
                 <th style={{ padding: '0.6rem 0.5rem', width: '50px' }}></th>
@@ -845,60 +831,48 @@ export default function ManufacturerLedger({
                           {!isCollapsed && (
                             <input
                               type="text"
-                              placeholder="Опис / формула..."
-                              value={row.note || ''}
-                              onChange={(e) => handleRowChange(row.id, 'note', e.target.value)}
+                              readOnly
+                              value={row.note || formulaHint}
                               style={{
                                 flex: 1,
                                 padding: '0.2rem 0.4rem',
                                 border: '1px solid #d97706',
                                 borderRadius: '0.3rem',
                                 fontSize: '0.8rem',
-                                background: '#fff'
+                                background: '#fff',
+                                color: '#78350f',
+                                fontWeight: '600'
                               }}
                             />
                           )}
                         </div>
                       </td>
                       <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
-                        {hasSelectedItems ? (
-                          <button
-                            type="button"
-                            onClick={() => handlePaySelectionOrUnpaid(true)}
-                            title="Натисніть, щоб оплатити вибрані позиції"
-                            style={{
-                              background: '#16a34a',
-                              color: '#ffffff',
-                              border: 'none',
-                              padding: '0.3rem 0.6rem',
-                              borderRadius: '0.4rem',
-                              fontWeight: '900',
-                              fontSize: '0.8rem',
-                              cursor: 'pointer',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            {selectedTotalUAH.toFixed(0)} грн • Оплатити
-                          </button>
-                        ) : (
-                          <input
-                            type="number"
-                            value={row.manualSumUAH !== undefined ? row.manualSumUAH : 0}
-                            onChange={(e) =>
-                              handleRowChange(row.id, 'manualSumUAH', Number(e.target.value))
-                            }
-                            style={{
-                              width: '90px',
-                              padding: '0.25rem',
-                              border: '2px solid #f59e0b',
-                              borderRadius: '0.3rem',
-                              fontWeight: '900',
-                              color: '#92400e',
-                              textAlign: 'right',
-                              background: '#fff'
-                            }}
-                          />
-                        )}
+                        <button
+                          type="button"
+                          onClick={handlePaySelectedInterval}
+                          disabled={!hasCheckedPairs}
+                          title={
+                            hasCheckedPairs
+                              ? 'Натисніть, щоб оплатити обраний проміжок'
+                              : 'Поставте галочку біля пар для розрахунку суми'
+                          }
+                          style={{
+                            background: hasCheckedPairs ? '#16a34a' : '#fef3c7',
+                            color: hasCheckedPairs ? '#ffffff' : '#92400e',
+                            border: '2px solid #f59e0b',
+                            padding: '0.3rem 0.65rem',
+                            borderRadius: '0.4rem',
+                            fontWeight: '900',
+                            fontSize: '0.85rem',
+                            cursor: hasCheckedPairs ? 'pointer' : 'default',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {hasCheckedPairs
+                            ? `${checkedTotalUAH.toFixed(0)} грн • Оплатити`
+                            : '0 грн'}
+                        </button>
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <button
@@ -927,7 +901,7 @@ export default function ManufacturerLedger({
                 const patternUAH = Number(row.patternCostUAH) || 0;
                 const rRate = Number(row.rowRate) || 0;
                 const isPaid = Boolean(row.isPaid);
-                const isSelected = Boolean(row.isSelectedForPay);
+                const isChecked = Boolean(row.isSelectedForPay);
 
                 const isEditing = row.isEditing !== undefined ? row.isEditing : !row.shoeId;
                 const rowUSD = qty * costUSD;
@@ -937,7 +911,6 @@ export default function ManufacturerLedger({
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
-                // Строго формат ДД.ММ
                 const displayDate = formatDayMonth(row.isoDate || row.date) || '—';
 
                 return (
@@ -947,7 +920,7 @@ export default function ManufacturerLedger({
                     style={{
                       background: isPaid
                         ? '#f1f5f9'
-                        : isSelected
+                        : isChecked
                         ? '#eef2ff'
                         : '#ffffff',
                       color: isPaid ? '#475569' : '#0f172a',
@@ -968,7 +941,7 @@ export default function ManufacturerLedger({
                           ) : (
                             <input
                               type="checkbox"
-                              checked={isSelected}
+                              checked={isChecked}
                               onChange={(e) =>
                                 handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
                               }
@@ -978,7 +951,7 @@ export default function ManufacturerLedger({
                                 cursor: 'pointer',
                                 accentColor: '#4f46e5'
                               }}
-                              title="Вибрати позицію для оплати"
+                              title="Відмітити пару для оплати"
                             />
                           )}
                         </td>
@@ -1131,7 +1104,7 @@ export default function ManufacturerLedger({
                               {!isPaid && (
                                 <input
                                   type="checkbox"
-                                  checked={isSelected}
+                                  checked={isChecked}
                                   onChange={(e) =>
                                     handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
                                   }
@@ -1141,7 +1114,7 @@ export default function ManufacturerLedger({
                                     cursor: 'pointer',
                                     accentColor: '#4f46e5'
                                   }}
-                                  title="Вибрати позицію для оплати"
+                                  title="Відмітити пару для оплати"
                                 />
                               )}
                               <span
@@ -1195,7 +1168,6 @@ export default function ManufacturerLedger({
                               alignItems: 'center'
                             }}
                           >
-                            {/* Поле вибору дати через календар, яке відображає строго ДД.ММ */}
                             <div
                               className="input-field"
                               style={{
@@ -1330,7 +1302,7 @@ export default function ManufacturerLedger({
               })}
             </tbody>
 
-            {/* ПІДСУМОК: СУМА $ ВИБРАНИХ * КУРС + ЛЕКАЛА ВИБРАНИХ */}
+            {/* ПІДСУМОК ПО ПАРАХ З ГАЛОЧКОЮ: СУМА $ * КУРС + ЛЕКАЛА */}
             <tfoot>
               <tr
                 style={{
@@ -1348,7 +1320,7 @@ export default function ManufacturerLedger({
                     whiteSpace: 'nowrap'
                   }}
                 >
-                  {hasSelectedItems ? `${selectedPairs} шт` : `${totalPairs} шт`}
+                  {hasCheckedPairs ? `${checkedPairs} шт` : `${totalPairs} шт`}
                 </td>
                 <td
                   colSpan="2"
@@ -1359,42 +1331,28 @@ export default function ManufacturerLedger({
                     fontSize: '0.8rem'
                   }}
                 >
-                  {hasSelectedItems ? 'РАЗОМ (ВИБРАНЕ):' : 'РАЗОМ:'}
+                  {hasCheckedPairs ? 'РАЗОМ (З ГАЛОЧКОЮ):' : 'РАЗОМ:'}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', color: '#0f172a' }}>
-                  <div>
-                    $
-                    {hasSelectedItems
-                      ? selectedUSD.toFixed(2)
-                      : totalUSD.toFixed(2)}
-                  </div>
-                  {(hasSelectedItems ? selectedPatternsUAH : totalPatternsUAH) > 0 && (
+                  <div>${hasCheckedPairs ? checkedUSD.toFixed(2) : totalUSD.toFixed(2)}</div>
+                  {(hasCheckedPairs ? checkedPatternsUAH : totalPatternsUAH) > 0 && (
                     <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
-                      +{' '}
-                      {(hasSelectedItems
-                        ? selectedPatternsUAH
-                        : totalPatternsUAH
-                      ).toFixed(0)}{' '}
-                      грн лекала
+                      + {(hasCheckedPairs ? checkedPatternsUAH : totalPatternsUAH).toFixed(0)} грн лекала
                     </div>
                   )}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', fontSize: '0.95rem' }}>
                   <div
-                    onClick={() => hasSelectedItems && handlePaySelectionOrUnpaid(true)}
+                    onClick={() => hasCheckedPairs && handlePaySelectedInterval()}
                     style={{
-                      color: hasSelectedItems
-                        ? '#4f46e5'
-                        : unpaidUAH === 0
-                        ? '#16a34a'
-                        : '#dc2626',
-                      cursor: hasSelectedItems ? 'pointer' : 'default'
+                      color: hasCheckedPairs ? '#16a34a' : '#0f172a',
+                      cursor: hasCheckedPairs ? 'pointer' : 'default'
                     }}
                   >
-                    {hasSelectedItems
-                      ? `${selectedTotalUAH.toFixed(0)} грн`
+                    {hasCheckedPairs
+                      ? `${checkedTotalUAH.toFixed(0)} грн`
                       : `${totalUAH.toFixed(0)} грн`}
                   </div>
                 </td>
@@ -1439,25 +1397,28 @@ export default function ManufacturerLedger({
 
             <button
               type="button"
-              onClick={() => handlePaySelectionOrUnpaid(false)}
+              onClick={handlePaySelectedInterval}
               style={{
-                background:
-                  !hasSelectedItems && unpaidUAH === 0 ? '#16a34a' : '#4f46e5',
+                background: showGreenPaidButton
+                  ? '#16a34a'
+                  : hasCheckedPairs
+                  ? '#4f46e5'
+                  : '#94a3b8',
                 color: '#ffffff',
                 border: 'none',
                 padding: '0.55rem 1.25rem',
                 borderRadius: '0.5rem',
-                cursor: 'pointer',
+                cursor: hasCheckedPairs ? 'pointer' : 'default',
                 fontWeight: '900',
                 fontSize: '0.9rem',
                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
               }}
             >
-              {hasSelectedItems
-                ? `${buttonAmount.toFixed(0)} грн • Оплатити вибране`
-                : unpaidUAH === 0
-                ? `${totalUAH.toFixed(0)} грн ✓ (оплачено)`
-                : `${unpaidUAH.toFixed(0)} грн • Оплатити`}
+              {showGreenPaidButton
+                ? `${paidUAH.toFixed(0)} грн ✓ (оплачено)`
+                : hasCheckedPairs
+                ? `${checkedTotalUAH.toFixed(0)} грн • Оплатити`
+                : '0 грн • Оплатити'}
             </button>
           </div>
         </div>
@@ -1519,7 +1480,7 @@ export default function ManufacturerLedger({
               borderRadius: '0.5rem'
             }}
           >
-            Ще немає оплачених позицій. Поставте галочку зліва та натисніть оплату.
+            Ще немає оплачених позицій. Поставте галочку біля пар та натисніть оплату.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
