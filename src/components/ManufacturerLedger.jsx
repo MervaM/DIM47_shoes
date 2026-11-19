@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 const UKRAINIAN_MONTH_MAP = {
   'січень': '01',
@@ -126,22 +126,25 @@ export default function ManufacturerLedger(props) {
 
   const todayISO = getLocalTodayISO();
   const resolvedYear = String(selectedYear || year || propCurrentYear || '2026');
-  
+
   const rawMonthInput =
-    selectedMonth !== undefined ? selectedMonth : (month !== undefined ? month : (currentMonth !== undefined ? currentMonth : (propActiveMonth !== undefined ? propActiveMonth : 7)));
+    selectedMonth !== undefined
+      ? selectedMonth
+      : month !== undefined
+      ? month
+      : currentMonth !== undefined
+      ? currentMonth
+      : propActiveMonth !== undefined
+      ? propActiveMonth
+      : 7;
   const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  
-  // Синхронізуємо дефолтну дату нового авансу з активним місяцем шапки
-  const defaultDepositDate = `${activeMonth}-01`;
-  const [newDepositDate, setNewDepositDate] = useState(defaultDepositDate);
+  const [newDepositDate, setNewDepositDate] = useState(`${activeMonth}-01`);
   const [newDepositAmount, setNewDepositAmount] = useState('');
-  
   const rowRefs = useRef({});
 
-  // Автоматично оновлюємо дату авансу, якщо змінюється місяць у шапці
-  React.useEffect(() => {
+  useEffect(() => {
     setNewDepositDate(`${activeMonth}-01`);
   }, [activeMonth]);
 
@@ -200,7 +203,9 @@ export default function ManufacturerLedger(props) {
   };
 
   const handleAddDeposit = () => {
-    if (!newDepositAmount) return;
+    const numericAmount = Number(newDepositAmount);
+    if (!newDepositAmount || Number.isNaN(numericAmount) || numericAmount <= 0) return;
+
     const chosenDate = newDepositDate || `${activeMonth}-01`;
     const depMonth = getMonthFromRow({ isoDate: chosenDate }, activeMonth, resolvedYear);
     const item = {
@@ -208,8 +213,9 @@ export default function ManufacturerLedger(props) {
       isoDate: chosenDate,
       month: depMonth,
       date: formatDayMonth(chosenDate),
-      amount: Number(newDepositAmount) || 0
+      amount: numericAmount
     };
+
     setDepositsList([...depositsList, item]);
     setNewDepositAmount('');
   };
@@ -587,7 +593,7 @@ export default function ManufacturerLedger(props) {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
               gap: '0.75rem',
               background: '#f9fafb',
               padding: '0.75rem',
@@ -599,30 +605,31 @@ export default function ManufacturerLedger(props) {
               <div
                 style={{
                   background: '#ffffff',
-                  padding: '0.6rem',
+                  padding: '0.65rem',
                   borderRadius: '0.5rem',
                   border: '1px solid #e5e7eb',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '0.4rem'
+                  gap: '0.45rem'
                 }}
               >
                 <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
                   💰 Аванси ({activeMonth}):
                 </span>
 
-                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                   <div
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       border: '1px solid #d1d5db',
-                      borderRadius: '0.3rem',
-                      padding: '0.2rem 0.35rem',
+                      borderRadius: '0.35rem',
+                      padding: '0.2rem 0.4rem',
                       background: '#fff',
                       fontSize: '0.75rem',
                       fontWeight: '700',
-                      gap: '0.2rem'
+                      gap: '0.25rem',
+                      flexShrink: 0
                     }}
                   >
                     <span>{formatDayMonth(newDepositDate) || 'ДД.ММ'}</span>
@@ -645,25 +652,34 @@ export default function ManufacturerLedger(props) {
                     placeholder="Сума грн"
                     value={newDepositAmount}
                     onChange={(e) => setNewDepositAmount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddDeposit();
+                      }
+                    }}
                     style={{
+                      minWidth: 0,
                       flex: 1,
-                      padding: '0.2rem 0.4rem',
+                      padding: '0.25rem 0.45rem',
                       fontSize: '0.75rem',
                       border: '1px solid #d1d5db',
-                      borderRadius: '0.3rem',
+                      borderRadius: '0.35rem',
                       fontWeight: 'bold'
                     }}
                   />
+
                   <button
                     type="button"
                     onClick={handleAddDeposit}
                     style={{
+                      flexShrink: 0,
                       background: '#16a34a',
                       color: '#fff',
                       border: 'none',
-                      padding: '0.2rem 0.5rem',
-                      borderRadius: '0.3rem',
-                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.65rem',
+                      borderRadius: '0.35rem',
+                      fontSize: '0.85rem',
                       fontWeight: 'bold',
                       cursor: 'pointer'
                     }}
@@ -678,9 +694,9 @@ export default function ManufacturerLedger(props) {
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '0.2rem',
-                      maxHeight: '70px',
+                      maxHeight: '85px',
                       overflowY: 'auto',
-                      marginTop: '0.2rem'
+                      marginTop: '0.15rem'
                     }}
                   >
                     {monthDeposits.map((dep) => (
@@ -692,14 +708,15 @@ export default function ManufacturerLedger(props) {
                           alignItems: 'center',
                           fontSize: '0.75rem',
                           background: '#f0fdf4',
-                          padding: '0.1rem 0.3rem',
-                          borderRadius: '0.25rem'
+                          padding: '0.2rem 0.4rem',
+                          borderRadius: '0.3rem'
                         }}
                       >
                         <span>
                           {formatDayMonth(dep.isoDate || dep.date)}: <strong>{dep.amount} грн</strong>
                         </span>
                         <button
+                          type="button"
                           onClick={() => handleDeleteDeposit(dep.id)}
                           style={{
                             background: 'none',
@@ -715,14 +732,15 @@ export default function ManufacturerLedger(props) {
                     ))}
                   </div>
                 )}
+
                 <div
                   style={{
-                    fontSize: '0.7rem',
+                    fontSize: '0.72rem',
                     color: '#4b5563',
                     fontWeight: '700',
                     textAlign: 'right',
                     borderTop: '1px dashed #e5e7eb',
-                    paddingTop: '0.2rem'
+                    paddingTop: '0.25rem'
                   }}
                 >
                   Разом авансів: {totalDepositsSum} грн
