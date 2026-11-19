@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ManufacturerLedger from './ManufacturerLedger';
 import SummaryView from './SummaryView';
 import ShoesCardsView from './ShoesCardsView';
@@ -69,12 +69,10 @@ function getRowPaidMonth(row, fallbackMonthKey) {
 }
 
 /**
- * Рахує перенесений залишок авансу ланцюжком з усіх попередніх місяців до targetMonthKey
- * (липень -> серпень -> вересень -> жовтень -> листопад і далі)
+ * Послідовний розрахунок залишку авансу по всіх місяцях до targetMonthKey
  */
 function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
   const keysSet = new Set(Object.keys(allMonthsMap || {}));
-
   const [targetYearStr, targetMonthStr] = targetMonthKey.split('-');
   const targetYear = Number(targetYearStr) || 2026;
   const targetMonthNum = Number(targetMonthStr) || 1;
@@ -94,11 +92,9 @@ function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
     const parts = key.split('-');
     const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
 
-    // 1. Внесені аванси цього місяця
     const mDeposits = getDepositsForMonth(mData, key, mIdx);
     const monthDepositsSum = mDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
-    // 2. Оплати "з авансу", проведені датою цього місяця (з будь-якого місяця замовлення)
     let monthPaidFromAdvanceUAH = 0;
 
     Object.keys(allMonthsMap || {}).forEach((sourceKey) => {
@@ -145,6 +141,32 @@ function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   return result;
 }
 
+function buildMonthPayload({
+  milaDepositsList,
+  milaInitialDebt,
+  milaRate,
+  milaRows,
+  valeraRate,
+  valeraRows,
+  expenses
+}) {
+  const depositsTotal = (milaDepositsList || []).reduce(
+    (sum, d) => sum + (Number(d.amount) || 0),
+    0
+  );
+
+  return {
+    milaDepositsList: milaDepositsList || [],
+    milaDeposit: depositsTotal,
+    milaInitialDebt: milaInitialDebt ?? 0,
+    milaRate: milaRate ?? 45.0,
+    milaRows: milaRows || [],
+    valeraRate: valeraRate ?? 45.0,
+    valeraRows: valeraRows || [],
+    expenses: expenses || []
+  };
+}
+
 export default function MonthView() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -167,18 +189,100 @@ export default function MonthView() {
   const [expenses, setExpenses] = useState([]);
   const [shoesCatalog, setShoesCatalog] = useState([]);
 
-  const canAutoSave = useRef(false);
-  const catalogDirty = useRef(false);
+  const isDirtyRef = useRef(false);
+  const isReadyToSaveRef = useRef(false);
+  const catalogDirtyRef = useRef(false);
+  const saveTimerRef = useRef(null);
+  const writeQueueRef = useRef(Promise.resolve());
+
+  const currentMonthKeyRef = useRef('');
+  const latestPayloadRef = useRef(null);
+  const latestCatalogRef = useRef([]);
 
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
+  currentMonthKeyRef.current = monthKey;
+  latestCatalogRef.current = shoesCatalog;
 
+  // Черга гарантованого послідовного запису в Supabase без перетирання
+  const enqueueSave = useCallback((targetKey, monthObj, overrideCatalog) => {
+    if (!targetKey || !monthObj) return Promise.resolve();
+
+    setSyncStatus('saving');
+
+    const task = writeQueueRef.current.then(async () => {
+      const { data: existingData, error: readError } = await supabase
+        .from('app_state')
+        .select('data')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (readError) {
+        console.error('Помилка читання перед записом:', readError);
+        setSyncStatus('error');
+        return;
+      }
+
+      const currentRoot = existingData?.data || {};
+      const nextMonths = {
+        ...(currentRoot.months || {}),
+        [targetKey]: monthObj
+      };
+
+      const nextCatalog =
+        overrideCatalog !== undefined
+          ? overrideCatalog
+          : catalogDirtyRef.current
+          ? latestCatalogRef.current
+          : currentRoot.shoesCatalog ?? latestCatalogRef.current;
+
+      const { error: writeError } = await supabase
+        .from('app_state')
+        .upsert({
+          id: 1,
+          data: {
+            ...currentRoot,
+            shoesCatalog: nextCatalog,
+            months: nextMonths
+          }
+        });
+
+      if (writeError) {
+        console.error('Помилка запису:', writeError);
+        setSyncStatus('error');
+      } else {
+        catalogDirtyRef.current = false;
+        setAllMonthsMap(nextMonths);
+        setSyncStatus('saved');
+      }
+    });
+
+    writeQueueRef.current = task.catch(() => {});
+    return task;
+  }, []);
+
+  // Миттєвий скид незбережених змін перед перемиканням місяця/вкладки
+  const flushPendingChanges = useCallback(async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (isDirtyRef.current && latestPayloadRef.current && currentMonthKeyRef.current) {
+      isDirtyRef.current = false;
+      await enqueueSave(currentMonthKeyRef.current, latestPayloadRef.current);
+    }
+  }, [enqueueSave]);
+
+  // Завантаження місяця (тільки після завершення попередніх записів)
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
 
-    async function loadDataForMonth() {
-      canAutoSave.current = false;
+    async function loadMonth() {
+      isReadyToSaveRef.current = false;
       setIsLoading(true);
       setSyncStatus('loading');
+
+      await writeQueueRef.current;
+      if (cancelled) return;
 
       const { data, error } = await supabase
         .from('app_state')
@@ -186,10 +290,10 @@ export default function MonthView() {
         .eq('id', 1)
         .maybeSingle();
 
-      if (isCancelled) return;
+      if (cancelled) return;
 
       if (error) {
-        console.error('Помилка завантаження:', error);
+        console.error('Помилка завантаження місяця:', error);
         setSyncStatus('error');
         setIsLoading(false);
         return;
@@ -198,97 +302,95 @@ export default function MonthView() {
       const rootData = data?.data || {};
       const allMonthsData = rootData.months || {};
       const monthData = allMonthsData[monthKey] || {};
-      const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
+      const mIdx = Math.max(0, Number(monthKey.split('-')[1] || 1) - 1);
+
+      const loadedDeposits = getDepositsForMonth(monthData, monthKey, mIdx);
+      const loadedInitDebt = monthData.milaInitialDebt ?? 0;
+      const loadedMilaRate = monthData.milaRate ?? 45.0;
+      const loadedMilaRows = Array.isArray(monthData.milaRows) ? monthData.milaRows : [];
+      const loadedValeraRate = monthData.valeraRate ?? 45.0;
+      const loadedValeraRows = Array.isArray(monthData.valeraRows) ? monthData.valeraRows : [];
+      const loadedExpenses = Array.isArray(monthData.expenses) ? monthData.expenses : [];
+      const loadedCatalog = Array.isArray(rootData.shoesCatalog) ? rootData.shoesCatalog : [];
 
       setAllMonthsMap(allMonthsData);
       setMilaDepositsList(loadedDeposits);
-      setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
-      setMilaRate(monthData.milaRate ?? 45.0);
-      setMilaRows(Array.isArray(monthData.milaRows) ? monthData.milaRows : []);
-      setValeraRate(monthData.valeraRate ?? 45.0);
-      setValeraRows(Array.isArray(monthData.valeraRows) ? monthData.valeraRows : []);
-      setExpenses(Array.isArray(monthData.expenses) ? monthData.expenses : []);
+      setMilaInitialDebt(loadedInitDebt);
+      setMilaRate(loadedMilaRate);
+      setMilaRows(loadedMilaRows);
+      setValeraRate(loadedValeraRate);
+      setValeraRows(loadedValeraRows);
+      setExpenses(loadedExpenses);
+      setShoesCatalog(loadedCatalog);
 
-      if (Array.isArray(rootData.shoesCatalog)) {
-        setShoesCatalog(rootData.shoesCatalog);
-      }
+      latestPayloadRef.current = buildMonthPayload({
+        milaDepositsList: loadedDeposits,
+        milaInitialDebt: loadedInitDebt,
+        milaRate: loadedMilaRate,
+        milaRows: loadedMilaRows,
+        valeraRate: loadedValeraRate,
+        valeraRows: loadedValeraRows,
+        expenses: loadedExpenses
+      });
 
+      isDirtyRef.current = false;
       setSyncStatus('saved');
       setIsLoading(false);
-      setTimeout(() => {
-        if (!isCancelled) canAutoSave.current = true;
-      }, 150);
+
+      requestAnimationFrame(() => {
+        if (!cancelled) {
+          isReadyToSaveRef.current = true;
+        }
+      });
     }
 
-    loadDataForMonth();
+    loadMonth();
 
     return () => {
-      isCancelled = true;
+      cancelled = true;
     };
-  }, [monthKey, selectedMonth]);
+  }, [monthKey]);
 
+  // Автозбереження при будь-якій зміні даних у відкритому місяці
   useEffect(() => {
-    if (isLoading || !canAutoSave.current) return;
+    if (isLoading || !isReadyToSaveRef.current) return;
 
-    const depositsTotal = milaDepositsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-    const updatedMonthObj = {
+    const payload = buildMonthPayload({
       milaDepositsList,
-      milaDeposit: depositsTotal,
       milaInitialDebt,
       milaRate,
       milaRows,
       valeraRate,
       valeraRows,
       expenses
-    };
+    });
+
+    latestPayloadRef.current = payload;
+    isDirtyRef.current = true;
 
     setAllMonthsMap((prev) => ({
       ...prev,
-      [monthKey]: updatedMonthObj
+      [monthKey]: payload
     }));
 
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
     setSyncStatus('saving');
-    const currentMonthKey = monthKey;
+    const targetKey = monthKey;
 
-    const timer = setTimeout(async () => {
-      const { data: existingData } = await supabase
-        .from('app_state')
-        .select('data')
-        .eq('id', 1)
-        .maybeSingle();
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      isDirtyRef.current = false;
+      enqueueSave(targetKey, payload);
+    }, 250);
 
-      const currentRoot = existingData?.data || {};
-      const nextMonths = {
-        ...(currentRoot.months || {}),
-        [currentMonthKey]: updatedMonthObj
-      };
-
-      const nextCatalog = catalogDirty.current
-        ? shoesCatalog
-        : (currentRoot.shoesCatalog ?? shoesCatalog);
-
-      const payloadToSave = {
-        ...currentRoot,
-        shoesCatalog: nextCatalog,
-        months: nextMonths
-      };
-
-      const { error } = await supabase
-        .from('app_state')
-        .upsert({ id: 1, data: payloadToSave });
-
-      if (error) {
-        console.error('Помилка збереження:', error);
-        setSyncStatus('error');
-      } else {
-        catalogDirty.current = false;
-        setAllMonthsMap(nextMonths);
-        setSyncStatus('saved');
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
       }
-    }, 600);
-
-    return () => clearTimeout(timer);
+    };
   }, [
     milaDepositsList,
     milaInitialDebt,
@@ -297,14 +399,57 @@ export default function MonthView() {
     valeraRate,
     valeraRows,
     expenses,
-    shoesCatalog,
     monthKey,
-    isLoading
+    isLoading,
+    enqueueSave
   ]);
 
+  // Збереження при закритті/оновленні сторінки
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isDirtyRef.current && latestPayloadRef.current && currentMonthKeyRef.current) {
+        enqueueSave(currentMonthKeyRef.current, latestPayloadRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [enqueueSave]);
+
+  const handleSelectMonth = async (newMonthIdx) => {
+    if (newMonthIdx === selectedMonth) return;
+    await flushPendingChanges();
+    setSelectedMonth(newMonthIdx);
+  };
+
+  const handleSelectYear = async (newYearVal) => {
+    if (newYearVal === selectedYear) return;
+    await flushPendingChanges();
+    setSelectedYear(newYearVal);
+  };
+
+  const handleTabChange = async (nextTab) => {
+    if (nextTab === activeTab) return;
+    await flushPendingChanges();
+    setActiveTab(nextTab);
+  };
+
   const handleSetShoesCatalog = (updater) => {
-    catalogDirty.current = true;
-    setShoesCatalog(updater);
+    catalogDirtyRef.current = true;
+    setShoesCatalog((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      latestCatalogRef.current = next;
+      const payloadToKeep = latestPayloadRef.current || buildMonthPayload({
+        milaDepositsList,
+        milaInitialDebt,
+        milaRate,
+        milaRows,
+        valeraRate,
+        valeraRows,
+        expenses
+      });
+      enqueueSave(monthKey, payloadToKeep, next);
+      return next;
+    });
   };
 
   const handleUpdateExternalRow = async (fieldName, storageMonthKey, rowId, patchOrDelete) => {
@@ -322,38 +467,12 @@ export default function MonthView() {
       [fieldName]: nextList
     };
 
-    const nextAllMonths = {
-      ...allMonthsMap,
+    setAllMonthsMap((prev) => ({
+      ...prev,
       [storageMonthKey]: nextTargetMonthObj
-    };
-    setAllMonthsMap(nextAllMonths);
+    }));
 
-    setSyncStatus('saving');
-    const { data: existingData } = await supabase
-      .from('app_state')
-      .select('data')
-      .eq('id', 1)
-      .maybeSingle();
-
-    const currentRoot = existingData?.data || {};
-    const payloadToSave = {
-      ...currentRoot,
-      months: {
-        ...(currentRoot.months || {}),
-        [storageMonthKey]: {
-          ...((currentRoot.months || {})[storageMonthKey] || targetMonthObj),
-          [fieldName]: nextList
-        }
-      }
-    };
-
-    const { error } = await supabase.from('app_state').upsert({ id: 1, data: payloadToSave });
-    if (error) {
-      console.error('Помилка оновлення перенесеного рядка:', error);
-      setSyncStatus('error');
-    } else {
-      setSyncStatus('saved');
-    }
+    await enqueueSave(storageMonthKey, nextTargetMonthObj);
   };
 
   const carriedAdvanceFromPrev = calculateChainedAdvance(allMonthsMap, monthKey);
@@ -409,7 +528,7 @@ export default function MonthView() {
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <select
                   value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  onChange={(e) => handleSelectMonth(Number(e.target.value))}
                   style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '2px solid #4f46e5', fontWeight: 'bold', fontSize: '1rem', color: '#4f46e5', background: '#f5f3ff' }}
                 >
                   {MONTHS_UKR.map((m, idx) => (
@@ -419,7 +538,7 @@ export default function MonthView() {
 
                 <select
                   value={selectedYear}
-                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  onChange={(e) => handleSelectYear(Number(e.target.value))}
                   style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '2px solid #4f46e5', fontWeight: 'bold', fontSize: '1rem', color: '#4f46e5', background: '#f5f3ff' }}
                 >
                   {[2025, 2026, 2027, 2028].map(y => (
@@ -439,16 +558,16 @@ export default function MonthView() {
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', background: '#f3f4f6', padding: '0.35rem', borderRadius: '0.75rem', width: 'fit-content', gap: '0.25rem' }}>
-          <button type="button" onClick={() => setActiveTab('summary')} className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}>
+          <button type="button" onClick={() => handleTabChange('summary')} className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}>
             📊 Загальна звітність
           </button>
-          <button type="button" onClick={() => setActiveTab('mila')} className={`tab-btn ${activeTab === 'mila' ? 'active' : ''}`}>
+          <button type="button" onClick={() => handleTabChange('mila')} className={`tab-btn ${activeTab === 'mila' ? 'active' : ''}`}>
             Міла (Аванс)
           </button>
-          <button type="button" onClick={() => setActiveTab('valera')} className={`tab-btn ${activeTab === 'valera' ? 'active' : ''}`}>
+          <button type="button" onClick={() => handleTabChange('valera')} className={`tab-btn ${activeTab === 'valera' ? 'active' : ''}`}>
             Валерій (Після видачі)
           </button>
-          <button type="button" onClick={() => setActiveTab('catalog')} className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}>
+          <button type="button" onClick={() => handleTabChange('catalog')} className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}>
             👟 Каталог взуття
           </button>
         </div>
