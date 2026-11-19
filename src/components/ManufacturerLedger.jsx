@@ -138,8 +138,8 @@ function getNextSequentialDate(existingMonthRows, activeMonth, fallbackYear) {
 }
 
 function getMonthFromRow(row, fallbackMonth, fallbackYear) {
-  if (row?.month) {
-    return normalizeMonthKey(row.month, fallbackYear);
+  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
+    return String(row.month);
   }
   if (row?.isoDate && typeof row.isoDate === 'string' && row.isoDate.includes('-')) {
     const parts = row.isoDate.split('-');
@@ -157,8 +157,8 @@ function getMonthFromRow(row, fallbackMonth, fallbackYear) {
 }
 
 function getPaidMonthFromRow(row, fallbackYear) {
-  if (row?.paidMonth) {
-    return normalizeMonthKey(row.paidMonth, fallbackYear);
+  if (row?.paidMonth && /^\d{4}-\d{2}$/.test(String(row.paidMonth))) {
+    return String(row.paidMonth);
   }
   if (row?.paidIsoDate && typeof row.paidIsoDate === 'string' && row.paidIsoDate.includes('-')) {
     const parts = row.paidIsoDate.split('-');
@@ -220,7 +220,7 @@ export default function ManufacturerLedger(props) {
 
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
-  const [paymentDateInput, setPaymentDateInput] = useState(formatDayMonth(todayISO));
+  const [paymentDateInput, setPaymentDateInput] = useState(`01.${activeMM}`);
 
   const rowRefs = useRef({});
 
@@ -235,7 +235,7 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Розрахунок перенесеного з попередніх місяців залишку авансу та боргу
+  // Аванси з попередніх місяців
   const prevDeposits = depositsList.filter((d) => {
     const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
     return depMonth < activeMonth;
@@ -247,11 +247,9 @@ export default function ManufacturerLedger(props) {
   });
 
   let localPrevPaidFromAdvanceUAH = 0;
-  let localPrevUnpaidDebtUAH = 0;
 
   rows.forEach((row) => {
     if (row.type !== 'item' || row.isEditing) return;
-    const rowMonth = getMonthFromRow(row, activeMonth, resolvedYear);
     const qty = Number(row.quantity) || 0;
     const costUSD = Number(row.customCostUSD) || 0;
     const patternUAH = Number(row.patternCostUAH) || 0;
@@ -263,24 +261,21 @@ export default function ManufacturerLedger(props) {
       if (paidM < activeMonth && row.paySource !== 'separate') {
         localPrevPaidFromAdvanceUAH += rowFullUAH;
       }
-    } else if (rowMonth < activeMonth) {
-      localPrevUnpaidDebtUAH += rowFullUAH;
     }
   });
 
-  const hasLocalPrevData = localPrevDepositsSum > 0 || localPrevPaidFromAdvanceUAH > 0 || localPrevUnpaidDebtUAH > 0;
+  const hasLocalPrevData = localPrevDepositsSum > 0 || localPrevPaidFromAdvanceUAH > 0;
   const carriedAdvanceBalance = hasLocalPrevData
     ? localPrevDepositsSum - localPrevPaidFromAdvanceUAH
     : Number(carriedAdvanceFromPrev) || 0;
-  const carriedDebtUAH = hasLocalPrevData
-    ? localPrevUnpaidDebtUAH
-    : Number(carriedDebtFromPrev) || 0;
 
-  // Рядки замовлень поточного місяця
+  // Показуємо рядки поточного місяця, а також неоплачені пари з попередніх місяців (перетягнуті в поточний місяць)
   const monthRows = rows.filter((r) => {
     if (r.isEditing) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    return rowMonth === activeMonth;
+    if (rowMonth === activeMonth) return true;
+    if (row.type === 'item' && !r.isPaid && rowMonth < activeMonth) return true;
+    return false;
   });
 
   // Оплачені рядки, дата оплати яких у поточному місяці
@@ -424,7 +419,7 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Підрахунки неоплачених і обраних пар поточного місяця
+  // Неоплачені та вибрані пари у поточному вікні місяця (включно з перенесеними неоплаченими)
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -487,7 +482,7 @@ export default function ManufacturerLedger(props) {
   const monthDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
   const totalAvailableAdvanceUAH = carriedAdvanceBalance + monthDepositsSum;
   const remainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
-  const totalDebtWithCarryUAH = unpaidUAH + carriedDebtUAH;
+  const totalDebtWithCarryUAH = unpaidUAH + (Number(carriedDebtFromPrev) || 0);
 
   const hasCheckedPairs = checkedPairs > 0;
   const isPaymentActivated = hasCheckedPairs && activatedSubtotalId !== null;
@@ -526,7 +521,8 @@ export default function ManufacturerLedger(props) {
       const targetIds = prevRows
         .filter((r) => {
           const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-          return rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay;
+          const isInCurrentWindow = rMonth === activeMonth || (!r.isPaid && rMonth < activeMonth);
+          return isInCurrentWindow && r.type === 'item' && !r.isPaid && r.isSelectedForPay;
         })
         .map((r) => r.id);
 
@@ -537,6 +533,7 @@ export default function ManufacturerLedger(props) {
           const adjust = r.id === firstId ? diffUAH : 0;
           return {
             ...r,
+            month: paidM,
             patternCostUAH: (Number(r.patternCostUAH) || 0) + adjust,
             isPaid: true,
             paySource: chosenSource,
@@ -551,6 +548,7 @@ export default function ManufacturerLedger(props) {
         if (r.id === activatedSubtotalId && r.type === 'subtotal') {
           return {
             ...r,
+            month: paidM,
             isPaid: true,
             paidAmountUAH: finalAmountUAH,
             paySource: chosenSource,
@@ -1045,11 +1043,6 @@ export default function ManufacturerLedger(props) {
                   {totalAvailableAdvanceUAH.toFixed(0)} грн − {paidFromAdvanceUAH.toFixed(0)} грн (з авансу)
                 </span>
               )}
-              {carriedDebtUAH > 0 && (
-                <span style={{ fontSize: '0.68rem', color: '#dc2626', fontWeight: '800' }}>
-                  Перенесений борг з минулих місяців: {carriedDebtUAH.toFixed(0)} грн
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -1349,6 +1342,9 @@ export default function ManufacturerLedger(props) {
                 const isChecked = Boolean(row.isSelectedForPay);
                 const paySource = row.paySource || 'advance';
 
+                const rowMonth = getMonthFromRow(row, activeMonth, resolvedYear);
+                const isCarriedUnpaidFromPrev = !isPaid && rowMonth < activeMonth;
+
                 const rowUSD = qty * costUSD;
                 const shoePartUAH = rowUSD * rRate;
                 const rowFullUAH = shoePartUAH + patternUAH;
@@ -1364,7 +1360,13 @@ export default function ManufacturerLedger(props) {
                     key={row.id}
                     ref={(el) => (rowRefs.current[row.id] = el)}
                     style={{
-                      background: isPaid ? '#f1f5f9' : isChecked ? '#eef2ff' : '#ffffff',
+                      background: isPaid
+                        ? '#f1f5f9'
+                        : isChecked
+                        ? '#eef2ff'
+                        : isCarriedUnpaidFromPrev
+                        ? '#fff7ed'
+                        : '#ffffff',
                       color: isPaid ? '#64748b' : '#0f172a',
                       borderBottom: '1px solid #e2e8f0',
                       transition: 'background 0.2s'
@@ -1411,23 +1413,40 @@ export default function ManufacturerLedger(props) {
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
                       ) : (
-                        <input
-                          type="text"
-                          value={displayDate}
-                          onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
-                          placeholder={`ДД.${activeMM}`}
-                          style={{
-                            width: '66px',
-                            padding: '0.25rem 0.35rem',
-                            border: '1px solid #cbd5e1',
-                            borderRadius: '0.35rem',
-                            fontSize: '0.8rem',
-                            fontWeight: '700',
-                            textAlign: 'center',
-                            background: '#fff'
-                          }}
-                          title="Дата замовлення вручну ДД.ММ"
-                        />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                          <input
+                            type="text"
+                            value={displayDate}
+                            onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
+                            placeholder={`ДД.${activeMM}`}
+                            style={{
+                              width: '66px',
+                              padding: '0.25rem 0.35rem',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '0.35rem',
+                              fontSize: '0.8rem',
+                              fontWeight: '700',
+                              textAlign: 'center',
+                              background: '#fff'
+                            }}
+                            title="Дата замовлення вручну ДД.ММ"
+                          />
+                          {isCarriedUnpaidFromPrev && (
+                            <span
+                              style={{
+                                fontSize: '0.64rem',
+                                fontWeight: '800',
+                                color: '#c2410c',
+                                background: '#ffedd5',
+                                padding: '0.08rem 0.3rem',
+                                borderRadius: '0.25rem',
+                                textAlign: 'center'
+                              }}
+                            >
+                              з {rowMonth.slice(5, 7)}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
 
