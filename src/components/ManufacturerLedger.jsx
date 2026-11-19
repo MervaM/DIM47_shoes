@@ -156,6 +156,26 @@ function getMonthFromRow(row, fallbackMonth, fallbackYear) {
   return fallbackMonth;
 }
 
+function getPaidMonthFromRow(row, fallbackYear) {
+  if (row?.paidMonth) {
+    return normalizeMonthKey(row.paidMonth, fallbackYear);
+  }
+  if (row?.paidIsoDate && typeof row.paidIsoDate === 'string' && row.paidIsoDate.includes('-')) {
+    const parts = row.paidIsoDate.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  const rawPaidDM = row?.paidDate || row?.paidAt;
+  if (rawPaidDM && typeof rawPaidDM === 'string' && rawPaidDM.includes('.')) {
+    const parts = rawPaidDM.split('.');
+    if (parts.length >= 2) {
+      return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  return getMonthFromRow(row, `${fallbackYear}-08`, fallbackYear);
+}
+
 export default function ManufacturerLedger(props) {
   const {
     manufacturerName = 'Міла',
@@ -200,6 +220,7 @@ export default function ManufacturerLedger(props) {
 
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
+  const [paymentDateInput, setPaymentDateInput] = useState(formatDayMonth(todayISO));
 
   const rowRefs = useRef({});
 
@@ -207,13 +228,14 @@ export default function ManufacturerLedger(props) {
     const [, mm] = activeMonth.split('-');
     setNewDepositDateText(`01.${mm || '08'}`);
     setActivatedSubtotalId(null);
-  }, [activeMonth]);
+    setPaymentDateInput(formatDayMonth(todayISO));
+  }, [activeMonth, todayISO]);
 
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Якщо в rows / depositsList передані дані за попередні місяці (< activeMonth), теж враховуємо
+  // Переноси з попередніх місяців (< activeMonth)
   const prevRows = rows.filter((r) => {
     if (r.type !== 'item' || r.isEditing) return false;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
@@ -241,7 +263,8 @@ export default function ManufacturerLedger(props) {
     const rowFullUAH = qty * costUSD * rRate + patternUAH;
 
     if (row.isPaid) {
-      if (row.paySource !== 'separate') {
+      const paidM = getPaidMonthFromRow(row, resolvedYear);
+      if (paidM < activeMonth && row.paySource !== 'separate') {
         localPrevPaidFromAdvanceUAH += rowFullUAH;
       }
     } else {
@@ -255,11 +278,17 @@ export default function ManufacturerLedger(props) {
   const carriedDebtUAH =
     Number(carriedDebtFromPrev) !== 0 ? Number(carriedDebtFromPrev) : localPrevUnpaidDebtUAH;
 
-  // Рядки поточного місяця
+  // Рядки замовлень, заведені у поточному місяці
   const monthRows = rows.filter((r) => {
     if (r.isEditing) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
     return rowMonth === activeMonth;
+  });
+
+  // Оплачені рядки, дата оплати яких припадає на поточний місяць (навіть якщо замовлення заведене раніше)
+  const monthPaidRows = rows.filter((r) => {
+    if (r.type !== 'item' || !r.isPaid) return false;
+    return getPaidMonthFromRow(r, resolvedYear) === activeMonth;
   });
 
   const monthDeposits = depositsList.filter((d) => {
@@ -285,6 +314,9 @@ export default function ManufacturerLedger(props) {
         isSelectedForPay: false,
         isPaid: false,
         paySource: 'advance',
+        paidDate: '',
+        paidIsoDate: '',
+        paidMonth: '',
         paidAt: '',
         photo: '',
         isEditing: true
@@ -355,6 +387,13 @@ export default function ManufacturerLedger(props) {
             updated.month = getMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
           }
 
+          if (field === 'paidDate') {
+            const parsedPaidISO = parseManualDateToISO(value, activeMonth, resolvedYear);
+            updated.paidIsoDate = parsedPaidISO;
+            updated.paidMonth = getMonthFromRow({ isoDate: parsedPaidISO }, activeMonth, resolvedYear);
+            updated.paidAt = formatDayMonth(value) || formatDayMonth(parsedPaidISO);
+          }
+
           if (field === 'shoeId' && value) {
             const found = shoesCatalog.find((s) => s.id === value);
             if (found) {
@@ -365,10 +404,20 @@ export default function ManufacturerLedger(props) {
           }
 
           if (field === 'isPaid') {
-            updated.paidAt = value ? formatDayMonth(todayISO) : '';
             if (value) {
+              const paidISO = parseManualDateToISO(paymentDateInput || formatDayMonth(todayISO), activeMonth, resolvedYear);
+              const paidDM = formatDayMonth(paymentDateInput) || formatDayMonth(paidISO);
+              updated.paidDate = paidDM;
+              updated.paidIsoDate = paidISO;
+              updated.paidMonth = getMonthFromRow({ isoDate: paidISO }, activeMonth, resolvedYear);
+              updated.paidAt = paidDM;
               updated.isSelectedForPay = false;
               updated.isEditing = false;
+            } else {
+              updated.paidDate = '';
+              updated.paidIsoDate = '';
+              updated.paidMonth = '';
+              updated.paidAt = '';
             }
           }
 
@@ -402,7 +451,7 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Підрахунки поточного місяця:
+  // Неоплачені та вибрані пари з замовлень поточного місяця:
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -414,57 +463,57 @@ export default function ManufacturerLedger(props) {
   let checkedRate = exchangeRate || 45.0;
   let checkedCalculatedUAH = 0;
 
+  monthRows.forEach((row) => {
+    if (row.type === 'item' && !row.isPaid) {
+      const qty = Number(row.quantity) || 0;
+      const costUSD = Number(row.customCostUSD) || 0;
+      const patternUAH = Number(row.patternCostUAH) || 0;
+      const rRate = Number(row.rowRate) || 0;
+      const isChecked = Boolean(row.isSelectedForPay);
+
+      const rowUSD = qty * costUSD;
+      const rowFullUAH = rowUSD * rRate + patternUAH;
+
+      unpaidPairs += qty;
+      unpaidUSD += rowUSD;
+      unpaidPatternsUAH += patternUAH;
+      unpaidUAH += rowFullUAH;
+
+      if (isChecked) {
+        checkedPairs += qty;
+        checkedUSD += rowUSD;
+        checkedPatternsUAH += patternUAH;
+        if (rRate > 0) checkedRate = rRate;
+        checkedCalculatedUAH += rowFullUAH;
+      }
+    }
+  });
+
+  // Оплати, що фактично відбулися у поточному місяці (за датою оплати / видачі)
   let paidPairs = 0;
   let paidTotalUAH = 0;
   let paidFromAdvanceUAH = 0;
   let paidSeparateUAH = 0;
 
-  monthRows.forEach((row) => {
-    if (row.type === 'item') {
-      const qty = Number(row.quantity) || 0;
-      const costUSD = Number(row.customCostUSD) || 0;
-      const patternUAH = Number(row.patternCostUAH) || 0;
-      const rRate = Number(row.rowRate) || 0;
-      const isPaid = Boolean(row.isPaid);
-      const isChecked = Boolean(row.isSelectedForPay);
+  monthPaidRows.forEach((row) => {
+    const qty = Number(row.quantity) || 0;
+    const costUSD = Number(row.customCostUSD) || 0;
+    const patternUAH = Number(row.patternCostUAH) || 0;
+    const rRate = Number(row.rowRate) || 0;
+    const rowFullUAH = qty * costUSD * rRate + patternUAH;
 
-      const rowUSD = qty * costUSD;
-      const shoePartUAH = rowUSD * rRate;
-      const rowFullUAH = shoePartUAH + patternUAH;
-
-      if (isPaid) {
-        paidPairs += qty;
-        paidTotalUAH += rowFullUAH;
-        if (row.paySource === 'separate') {
-          paidSeparateUAH += rowFullUAH;
-        } else {
-          paidFromAdvanceUAH += rowFullUAH;
-        }
-      } else {
-        unpaidPairs += qty;
-        unpaidUSD += rowUSD;
-        unpaidPatternsUAH += patternUAH;
-        unpaidUAH += rowFullUAH;
-
-        if (isChecked) {
-          checkedPairs += qty;
-          checkedUSD += rowUSD;
-          checkedPatternsUAH += patternUAH;
-          if (rRate > 0) checkedRate = rRate;
-          checkedCalculatedUAH += rowFullUAH;
-        }
-      }
+    paidPairs += qty;
+    paidTotalUAH += rowFullUAH;
+    if (row.paySource === 'separate') {
+      paidSeparateUAH += rowFullUAH;
+    } else {
+      paidFromAdvanceUAH += rowFullUAH;
     }
   });
 
   const monthDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-  // Загальний доступний аванс з урахуванням переносу з минулих місяців
   const totalAvailableAdvanceUAH = carriedAdvanceBalance + monthDepositsSum;
-  // Поточний залишок авансу після списань у поточному місяці
   const remainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
-
-  // Загальний борг (поточні неоплачені + перенесений борг з минулих місяців)
   const totalDebtWithCarryUAH = unpaidUAH + carriedDebtUAH;
 
   const hasCheckedPairs = checkedPairs > 0;
@@ -491,7 +540,10 @@ export default function ManufacturerLedger(props) {
     const chosenSource = sourceOverride || selectedPaySource;
     const finalAmountUAH = getSubtotalFinalUAH(activatedSubtotalId);
     const diffUAH = finalAmountUAH - checkedCalculatedUAH;
-    const nowShort = formatDayMonth(todayISO);
+
+    const paidISO = parseManualDateToISO(paymentDateInput || formatDayMonth(todayISO), activeMonth, resolvedYear);
+    const paidDM = formatDayMonth(paymentDateInput) || formatDayMonth(paidISO);
+    const paidM = getMonthFromRow({ isoDate: paidISO }, activeMonth, resolvedYear);
 
     setRows((prevRows) => {
       const targetIds = prevRows
@@ -512,7 +564,10 @@ export default function ManufacturerLedger(props) {
             isPaid: true,
             paySource: chosenSource,
             isSelectedForPay: false,
-            paidAt: nowShort,
+            paidDate: paidDM,
+            paidIsoDate: paidISO,
+            paidMonth: paidM,
+            paidAt: paidDM,
             isEditing: false
           };
         }
@@ -522,7 +577,10 @@ export default function ManufacturerLedger(props) {
             isPaid: true,
             paidAmountUAH: finalAmountUAH,
             paySource: chosenSource,
-            paidAt: nowShort
+            paidDate: paidDM,
+            paidIsoDate: paidISO,
+            paidMonth: paidM,
+            paidAt: paidDM
           };
         }
         return r;
@@ -961,7 +1019,7 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#16a34a' }}>
-                Оплачено ({activeMonth}):
+                Оплачено за датою оплати ({activeMonth}):
               </span>
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
                 {paidTotalUAH.toFixed(0)} грн
@@ -1053,7 +1111,7 @@ export default function ManufacturerLedger(props) {
                   ✓
                 </th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.4rem', width: '76px' }}>Дата</th>
+                <th style={{ padding: '0.6rem 0.4rem', width: '82px' }}>Дата зам.</th>
                 <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
@@ -1322,6 +1380,7 @@ export default function ManufacturerLedger(props) {
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
                 const displayDate = row.date || formatDayMonth(row.isoDate) || '';
+                const displayPaidDate = row.paidDate || row.paidAt || '';
 
                 return (
                   <tr
@@ -1390,7 +1449,7 @@ export default function ManufacturerLedger(props) {
                             textAlign: 'center',
                             background: '#fff'
                           }}
-                          title="Дата вручну ДД.ММ"
+                          title="Дата замовлення вручну ДД.ММ"
                         />
                       )}
                     </td>
@@ -1476,6 +1535,39 @@ export default function ManufacturerLedger(props) {
                             >
                               ✓ Оплачено
                             </span>
+
+                            <label
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                color: '#166534',
+                                background: '#f0fdf4',
+                                border: '1px solid #86efac',
+                                padding: '0.12rem 0.35rem',
+                                borderRadius: '0.35rem'
+                              }}
+                              title="Дата видачі / оплати"
+                            >
+                              <span>опл.</span>
+                              <input
+                                type="text"
+                                value={displayPaidDate}
+                                onChange={(e) => handleRowChange(row.id, 'paidDate', e.target.value)}
+                                placeholder={`ДД.${activeMM}`}
+                                style={{
+                                  width: '48px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  fontSize: '0.7rem',
+                                  fontWeight: '800',
+                                  color: '#15803d',
+                                  padding: 0
+                                }}
+                              />
+                            </label>
 
                             <button
                               type="button"
@@ -1704,7 +1796,7 @@ export default function ManufacturerLedger(props) {
           </table>
         </div>
 
-        {/* НИЖНЯ ПАНЕЛЬ З ВИБОРОМ ОПЛАТИ ТА СІРОЮ/АКТИВНОЮ КНОПКОЮ */}
+        {/* НИЖНЯ ПАНЕЛЬ З ДАТОЮ ОПЛАТИ, ВИБОРОМ ДЖЕРЕЛА ТА КНОПКОЮ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1746,6 +1838,42 @@ export default function ManufacturerLedger(props) {
             <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a' }}>
               Неоплачено: {unpaidUAH.toFixed(0)} грн
             </div>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.78rem',
+                fontWeight: '700',
+                color: '#334155',
+                background: '#f8fafc',
+                padding: '0.3rem 0.55rem',
+                borderRadius: '0.45rem',
+                border: '1px solid #cbd5e1',
+                opacity: isPaymentActivated ? 1 : 0.65
+              }}
+              title="Дата видачі та фактичної оплати"
+            >
+              <span>Дата опл.:</span>
+              <input
+                type="text"
+                disabled={!isPaymentActivated}
+                value={paymentDateInput}
+                onChange={(e) => setPaymentDateInput(e.target.value)}
+                placeholder={`ДД.${activeMM}`}
+                style={{
+                  width: '56px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.3rem',
+                  padding: '0.15rem 0.3rem',
+                  fontSize: '0.78rem',
+                  fontWeight: '800',
+                  textAlign: 'center',
+                  background: '#ffffff'
+                }}
+              />
+            </label>
 
             <div
               style={{

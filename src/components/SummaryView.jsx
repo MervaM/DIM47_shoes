@@ -10,6 +10,9 @@ const EXPENSE_CATEGORIES = [
 ];
 
 export default function SummaryView({
+  monthKey = '',
+  milaPaidRows,
+  valeraPaidRows,
   milaRows = [],
   valeraRows = [],
   milaRate = 45,
@@ -22,6 +25,8 @@ export default function SummaryView({
     let uah = 0;
     let usd = 0;
     let patternsUAH = 0;
+    let fromAdvanceUAH = 0;
+    let separateUAH = 0;
 
     rows.forEach((row) => {
       if (row.type === 'item') {
@@ -37,22 +42,49 @@ export default function SummaryView({
         usd += rowUSD;
         patternsUAH += patternUAH;
         uah += rowUAH;
+
+        if (row.isPaid) {
+          if (row.paySource === 'separate') {
+            separateUAH += rowUAH;
+          } else {
+            fromAdvanceUAH += rowUAH;
+          }
+        }
       }
     });
 
-    return { pairs, uah, usd, patternsUAH };
+    return { pairs, uah, usd, patternsUAH, fromAdvanceUAH, separateUAH };
   };
 
-  const milaStats = calculateStats(milaRows, milaRate);
-  const valeraStats = calculateStats(valeraRows, valeraRate);
+  // Використовуємо оплачені за датою оплати/видачі рядки; якщо передані лише звичайні rows — беремо isPaid з них
+  const effectiveMilaPaid = Array.isArray(milaPaidRows)
+    ? milaPaidRows
+    : milaRows.filter((r) => r.type === 'item' && r.isPaid);
+  const effectiveValeraPaid = Array.isArray(valeraPaidRows)
+    ? valeraPaidRows
+    : valeraRows.filter((r) => r.type === 'item' && r.isPaid);
 
-  const totalPairs = milaStats.pairs + valeraStats.pairs;
-  const productionUAH = milaStats.uah + valeraStats.uah;
-  const productionUSD = milaStats.usd + valeraStats.usd;
-  const totalPatternsUAH = milaStats.patternsUAH + valeraStats.patternsUAH;
+  const milaPaidStats = calculateStats(effectiveMilaPaid, milaRate);
+  const valeraPaidStats = calculateStats(effectiveValeraPaid, valeraRate);
+
+  const totalPaidPairs = milaPaidStats.pairs + valeraPaidStats.pairs;
+  const productionPaidUAH = milaPaidStats.uah + valeraPaidStats.uah;
+  const productionPaidUSD = milaPaidStats.usd + valeraPaidStats.usd;
+  const totalPaidPatternsUAH = milaPaidStats.patternsUAH + valeraPaidStats.patternsUAH;
+
+  // Статистика за замовленнями, створеними у поточному місяці (для довідки: скільки всього замовлено і скільки ще в роботі)
+  const milaOrderedStats = calculateStats(milaRows, milaRate);
+  const valeraOrderedStats = calculateStats(valeraRows, valeraRate);
+  const totalOrderedPairs = milaOrderedStats.pairs + valeraOrderedStats.pairs;
+
+  const unpaidOrderedRows = [
+    ...milaRows.filter((r) => r.type === 'item' && !r.isPaid),
+    ...valeraRows.filter((r) => r.type === 'item' && !r.isPaid)
+  ];
+  const unpaidOrderedStats = calculateStats(unpaidOrderedRows, milaRate);
 
   const extraExpensesUAH = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const grandTotalUAH = productionUAH + extraExpensesUAH;
+  const grandTotalUAH = productionPaidUAH + extraExpensesUAH;
 
   const handleAddExpense = () => {
     setExpenses([
@@ -74,35 +106,43 @@ export default function SummaryView({
       {/* БЛОК 1: ЗАГАЛЬНІ ФІНАНСОВІ ПОКАЗНИКИ */}
       <div className="card" style={{ padding: '1.5rem' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#111827', margin: '0 0 1.25rem 0' }}>
-          📊 Зведена фінансова картина місяця
+          📊 Зведена фінансова картина місяця {monthKey ? `(${monthKey})` : ''}
         </h2>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
           <div style={{ background: '#eef2ff', padding: '1.25rem', borderRadius: '1rem', border: '1px solid #e0e7ff' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#4f46e5', textTransform: 'uppercase' }}>
-              Виготовлено пар
+              Видано та оплачено пар
             </span>
             <p style={{ fontSize: '1.85rem', fontWeight: '900', color: '#111827', margin: '0.4rem 0 0.2rem 0' }}>
-              {totalPairs} шт.
+              {totalPaidPairs} шт.
             </p>
             <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-              Міла: <b>{milaStats.pairs}</b> | Валерій: <b>{valeraStats.pairs}</b>
+              Міла: <b>{milaPaidStats.pairs}</b> | Валерій: <b>{valeraPaidStats.pairs}</b>
+            </div>
+            <div style={{ fontSize: '0.73rem', color: '#4f46e5', fontWeight: '600', marginTop: '0.25rem' }}>
+              Замовлено в міс.: {totalOrderedPairs} шт. (неопл.: {unpaidOrderedStats.pairs} шт.)
             </div>
           </div>
 
           <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '1rem', border: '1px solid #dcfce7' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#16a34a', textTransform: 'uppercase' }}>
-              Виробництво (взуття)
+              Виробництво (за датою оплати)
             </span>
             <p style={{ fontSize: '1.85rem', fontWeight: '900', color: '#111827', margin: '0.4rem 0 0.2rem 0' }}>
-              {productionUAH.toFixed(0)} грн
+              {productionPaidUAH.toFixed(0)} грн
             </p>
             <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-              ${productionUSD.toFixed(2)} (Міла: {milaStats.uah.toFixed(0)} | Вал: {valeraStats.uah.toFixed(0)})
+              ${productionPaidUSD.toFixed(2)} (Міла: {milaPaidStats.uah.toFixed(0)} | Вал: {valeraPaidStats.uah.toFixed(0)})
             </div>
-            {totalPatternsUAH > 0 && (
+            {milaPaidStats.uah > 0 && (
+              <div style={{ fontSize: '0.72rem', color: '#166534', fontWeight: '600', marginTop: '0.2rem' }}>
+                Міла: з авансу {milaPaidStats.fromAdvanceUAH.toFixed(0)} • окремо {milaPaidStats.separateUAH.toFixed(0)} грн
+              </div>
+            )}
+            {totalPaidPatternsUAH > 0 && (
               <div style={{ fontSize: '0.75rem', color: '#d97706', fontWeight: '700', marginTop: '0.2rem' }}>
-                в т.ч. лекала: {totalPatternsUAH.toFixed(0)} грн
+                в т.ч. лекала: {totalPaidPatternsUAH.toFixed(0)} грн
               </div>
             )}
           </div>
@@ -124,7 +164,7 @@ export default function SummaryView({
             <p style={{ fontSize: '1.85rem', fontWeight: '900', color: '#ffffff', margin: '0.4rem 0 0.2rem 0' }}>
               {grandTotalUAH.toFixed(0)} грн
             </p>
-            <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Виробництво + Дод. витрати</div>
+            <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Оплачене виробництво + Дод. витрати</div>
           </div>
         </div>
       </div>

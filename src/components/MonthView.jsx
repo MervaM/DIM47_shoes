@@ -27,6 +27,30 @@ function getDepositsForMonth(monthData, monthKey, monthIndex) {
   return [];
 }
 
+function getRowPaidMonth(row, fallbackMonthKey) {
+  if (row?.paidMonth && /^\d{4}-\d{2}$/.test(String(row.paidMonth))) {
+    return String(row.paidMonth);
+  }
+  if (row?.paidIsoDate && typeof row.paidIsoDate === 'string' && row.paidIsoDate.includes('-')) {
+    const parts = row.paidIsoDate.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  const rawDM = row?.paidDate || row?.paidAt;
+  const fallbackYear = fallbackMonthKey.split('-')[0] || '2026';
+  if (rawDM && typeof rawDM === 'string' && rawDM.includes('.')) {
+    const parts = rawDM.split('.');
+    if (parts.length >= 2) {
+      return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
+    return String(row.month);
+  }
+  return fallbackMonthKey;
+}
+
 function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufacturer) {
   let depositsSum = 0;
   let paidFromAdvanceUAH = 0;
@@ -35,16 +59,17 @@ function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufa
   const sortedKeys = Object.keys(allMonthsMap || {}).sort();
 
   sortedKeys.forEach((key) => {
-    if (key >= currentMonthKey) return;
     const mData = allMonthsMap[key] || {};
     const parts = key.split('-');
     const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
 
     if (manufacturer === 'Міла') {
-      const mDeposits = getDepositsForMonth(mData, key, mIdx);
-      mDeposits.forEach((d) => {
-        depositsSum += Number(d.amount) || 0;
-      });
+      if (key < currentMonthKey) {
+        const mDeposits = getDepositsForMonth(mData, key, mIdx);
+        mDeposits.forEach((d) => {
+          depositsSum += Number(d.amount) || 0;
+        });
+      }
 
       const rows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
       rows.forEach((row) => {
@@ -56,27 +81,30 @@ function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufa
         const rowFullUAH = qty * costUSD * rate + patternUAH;
 
         if (row.isPaid) {
-          if (row.paySource !== 'separate') {
+          const paidM = getRowPaidMonth(row, key);
+          if (paidM < currentMonthKey && row.paySource !== 'separate') {
             paidFromAdvanceUAH += rowFullUAH;
           }
-        } else {
+        } else if (key < currentMonthKey) {
           unpaidDebtUAH += rowFullUAH;
         }
       });
     } else if (manufacturer === 'Валерій') {
-      const rows = Array.isArray(mData.valeraRows) ? mData.valeraRows : [];
-      rows.forEach((row) => {
-        if (row.type !== 'item' || row.isEditing) return;
-        const qty = Number(row.quantity) || 0;
-        const costUSD = Number(row.customCostUSD) || 0;
-        const patternUAH = Number(row.patternCostUAH) || 0;
-        const rate = Number(row.rowRate) || Number(mData.valeraRate) || 45;
-        const rowFullUAH = qty * costUSD * rate + patternUAH;
+      if (key < currentMonthKey) {
+        const rows = Array.isArray(mData.valeraRows) ? mData.valeraRows : [];
+        rows.forEach((row) => {
+          if (row.type !== 'item' || row.isEditing) return;
+          const qty = Number(row.quantity) || 0;
+          const costUSD = Number(row.customCostUSD) || 0;
+          const patternUAH = Number(row.patternCostUAH) || 0;
+          const rate = Number(row.rowRate) || Number(mData.valeraRate) || 45;
+          const rowFullUAH = qty * costUSD * rate + patternUAH;
 
-        if (!row.isPaid) {
-          unpaidDebtUAH += rowFullUAH;
-        }
-      });
+          if (!row.isPaid) {
+            unpaidDebtUAH += rowFullUAH;
+          }
+        });
+      }
     }
   });
 
@@ -84,6 +112,41 @@ function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufa
     carriedAdvance: depositsSum - paidFromAdvanceUAH,
     carriedDebt: unpaidDebtUAH
   };
+}
+
+function collectPaidRowsForMonth(allMonthsMap, targetMonthKey) {
+  const milaPaid = [];
+  const valeraPaid = [];
+
+  Object.keys(allMonthsMap || {}).forEach((key) => {
+    const mData = allMonthsMap[key] || {};
+
+    const mRows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
+    mRows.forEach((row) => {
+      if (row.type === 'item' && row.isPaid) {
+        if (getRowPaidMonth(row, key) === targetMonthKey) {
+          milaPaid.push({
+            ...row,
+            rowRate: Number(row.rowRate) || Number(mData.milaRate) || 45
+          });
+        }
+      }
+    });
+
+    const vRows = Array.isArray(mData.valeraRows) ? mData.valeraRows : [];
+    vRows.forEach((row) => {
+      if (row.type === 'item' && row.isPaid) {
+        if (getRowPaidMonth(row, key) === targetMonthKey) {
+          valeraPaid.push({
+            ...row,
+            rowRate: Number(row.rowRate) || Number(mData.valeraRate) || 45
+          });
+        }
+      }
+    });
+  });
+
+  return { milaPaid, valeraPaid };
 }
 
 export default function MonthView() {
@@ -95,7 +158,7 @@ export default function MonthView() {
   const [isLoading, setIsLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState('saved');
 
-  // Усі місяці з бази для розрахунку переносу залишків і боргів
+  // Усі місяці з бази
   const [allMonthsMap, setAllMonthsMap] = useState({});
 
   // Дані для поточного обраного місяця
@@ -121,7 +184,6 @@ export default function MonthView() {
   // Унікальний ключ для місяця в базі, напр. "2026-08"
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
 
-  // Завантаження даних при зміні місяця або старті
   useEffect(() => {
     async function loadDataForMonth() {
       setIsLoading(true);
@@ -163,7 +225,6 @@ export default function MonthView() {
     loadDataForMonth();
   }, [monthKey, selectedMonth]);
 
-  // Збереження даних у хмару при будь-якій зміні
   useEffect(() => {
     if (isLoading) return;
     if (isRemoteUpdate.current) {
@@ -226,6 +287,7 @@ export default function MonthView() {
 
   const milaCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Міла');
   const valeraCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Валерій');
+  const paidByDateMap = collectPaidRowsForMonth(allMonthsMap, monthKey);
 
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
@@ -307,6 +369,9 @@ export default function MonthView() {
         <>
           {activeTab === 'summary' && (
             <SummaryView
+              monthKey={monthKey}
+              milaPaidRows={paidByDateMap.milaPaid}
+              valeraPaidRows={paidByDateMap.valeraPaid}
               milaRows={milaRows}
               valeraRows={valeraRows}
               milaRate={milaRate}
