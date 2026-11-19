@@ -220,6 +220,7 @@ export default function MonthView() {
 
     setMilaDepositsList([]);
     setMilaManualRemaining(null);
+    setMilaInitialDebt(0);
     setSyncStatus('saving');
 
     const task = writeQueueRef.current.then(async () => {
@@ -244,14 +245,16 @@ export default function MonthView() {
           ...rawMonths[k],
           milaDepositsList: [],
           milaDeposit: 0,
-          milaManualRemaining: null
+          milaManualRemaining: null,
+          milaInitialDebt: 0,
+          milaCarriedAdvance: 0
         };
       });
 
       cleanedMonths[monthKey] = buildMonthPayload({
         milaDepositsList: [],
         milaManualRemaining: null,
-        milaInitialDebt,
+        milaInitialDebt: 0,
         milaRate,
         milaRows,
         valeraRate,
@@ -265,6 +268,9 @@ export default function MonthView() {
           id: 1,
           data: {
             ...currentRoot,
+            milaDepositsList: [],
+            milaDeposit: 0,
+            milaManualRemaining: null,
             months: cleanedMonths
           }
         });

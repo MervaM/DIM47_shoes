@@ -314,10 +314,7 @@ export default function ManufacturerLedger(props) {
     return getPaidMonthFromRow(r, fallbackM, resolvedYear) === activeMonth;
   });
 
-  const monthDeposits = depositsList.filter((d) => {
-    const depMonth = getOrderMonthFromRow(d, activeMonth, resolvedYear);
-    return depMonth === activeMonth;
-  });
+  const monthDeposits = depositsList;
 
   const handleAddRow = () => {
     const nextSeq = getNextSequentialDate(currentMonthOwnRows, activeMonth, resolvedYear);
