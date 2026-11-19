@@ -228,20 +228,14 @@ export default function ManufacturerLedger(props) {
     const [, mm] = activeMonth.split('-');
     setNewDepositDateText(`01.${mm || '08'}`);
     setActivatedSubtotalId(null);
-    setPaymentDateInput(formatDayMonth(todayISO));
-  }, [activeMonth, todayISO]);
+    setPaymentDateInput(`01.${mm || '08'}`);
+  }, [activeMonth]);
 
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Переноси з попередніх місяців (< activeMonth)
-  const prevRows = rows.filter((r) => {
-    if (r.type !== 'item' || r.isEditing) return false;
-    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    return rowMonth < activeMonth;
-  });
-
+  // Розрахунок перенесеного з попередніх місяців залишку авансу та боргу
   const prevDeposits = depositsList.filter((d) => {
     const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
     return depMonth < activeMonth;
@@ -255,7 +249,9 @@ export default function ManufacturerLedger(props) {
   let localPrevPaidFromAdvanceUAH = 0;
   let localPrevUnpaidDebtUAH = 0;
 
-  prevRows.forEach((row) => {
+  rows.forEach((row) => {
+    if (row.type !== 'item' || row.isEditing) return;
+    const rowMonth = getMonthFromRow(row, activeMonth, resolvedYear);
     const qty = Number(row.quantity) || 0;
     const costUSD = Number(row.customCostUSD) || 0;
     const patternUAH = Number(row.patternCostUAH) || 0;
@@ -267,25 +263,27 @@ export default function ManufacturerLedger(props) {
       if (paidM < activeMonth && row.paySource !== 'separate') {
         localPrevPaidFromAdvanceUAH += rowFullUAH;
       }
-    } else {
+    } else if (rowMonth < activeMonth) {
       localPrevUnpaidDebtUAH += rowFullUAH;
     }
   });
 
-  const localCarriedAdvance = localPrevDepositsSum - localPrevPaidFromAdvanceUAH;
-  const carriedAdvanceBalance =
-    Number(carriedAdvanceFromPrev) !== 0 ? Number(carriedAdvanceFromPrev) : localCarriedAdvance;
-  const carriedDebtUAH =
-    Number(carriedDebtFromPrev) !== 0 ? Number(carriedDebtFromPrev) : localPrevUnpaidDebtUAH;
+  const hasLocalPrevData = localPrevDepositsSum > 0 || localPrevPaidFromAdvanceUAH > 0 || localPrevUnpaidDebtUAH > 0;
+  const carriedAdvanceBalance = hasLocalPrevData
+    ? localPrevDepositsSum - localPrevPaidFromAdvanceUAH
+    : Number(carriedAdvanceFromPrev) || 0;
+  const carriedDebtUAH = hasLocalPrevData
+    ? localPrevUnpaidDebtUAH
+    : Number(carriedDebtFromPrev) || 0;
 
-  // Рядки замовлень, заведені у поточному місяці
+  // Рядки замовлень поточного місяця
   const monthRows = rows.filter((r) => {
     if (r.isEditing) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
     return rowMonth === activeMonth;
   });
 
-  // Оплачені рядки, дата оплати яких припадає на поточний місяць (навіть якщо замовлення заведене раніше)
+  // Оплачені рядки, дата оплати яких у поточному місяці
   const monthPaidRows = rows.filter((r) => {
     if (r.type !== 'item' || !r.isPaid) return false;
     return getPaidMonthFromRow(r, resolvedYear) === activeMonth;
@@ -387,37 +385,12 @@ export default function ManufacturerLedger(props) {
             updated.month = getMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
           }
 
-          if (field === 'paidDate') {
-            const parsedPaidISO = parseManualDateToISO(value, activeMonth, resolvedYear);
-            updated.paidIsoDate = parsedPaidISO;
-            updated.paidMonth = getMonthFromRow({ isoDate: parsedPaidISO }, activeMonth, resolvedYear);
-            updated.paidAt = formatDayMonth(value) || formatDayMonth(parsedPaidISO);
-          }
-
           if (field === 'shoeId' && value) {
             const found = shoesCatalog.find((s) => s.id === value);
             if (found) {
               updated.customCostUSD = found.defaultCostUSD;
               updated.photo = found.photo || '';
               updated.isEditing = true;
-            }
-          }
-
-          if (field === 'isPaid') {
-            if (value) {
-              const paidISO = parseManualDateToISO(paymentDateInput || formatDayMonth(todayISO), activeMonth, resolvedYear);
-              const paidDM = formatDayMonth(paymentDateInput) || formatDayMonth(paidISO);
-              updated.paidDate = paidDM;
-              updated.paidIsoDate = paidISO;
-              updated.paidMonth = getMonthFromRow({ isoDate: paidISO }, activeMonth, resolvedYear);
-              updated.paidAt = paidDM;
-              updated.isSelectedForPay = false;
-              updated.isEditing = false;
-            } else {
-              updated.paidDate = '';
-              updated.paidIsoDate = '';
-              updated.paidMonth = '';
-              updated.paidAt = '';
             }
           }
 
@@ -451,7 +424,7 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Неоплачені та вибрані пари з замовлень поточного місяця:
+  // Підрахунки неоплачених і обраних пар поточного місяця
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -489,7 +462,7 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  // Оплати, що фактично відбулися у поточному місяці (за датою оплати / видачі)
+  // Оплати за датою оплати у поточному місяці
   let paidPairs = 0;
   let paidTotalUAH = 0;
   let paidFromAdvanceUAH = 0;
@@ -534,14 +507,18 @@ export default function ManufacturerLedger(props) {
     setActivatedSubtotalId((prev) => (prev === subtotalId ? null : subtotalId));
   };
 
-  const handleConfirmPayment = (sourceOverride) => {
+  const handleConfirmPayment = () => {
     if (!isPaymentActivated) return;
 
-    const chosenSource = sourceOverride || selectedPaySource;
+    const chosenSource = selectedPaySource;
     const finalAmountUAH = getSubtotalFinalUAH(activatedSubtotalId);
     const diffUAH = finalAmountUAH - checkedCalculatedUAH;
 
-    const paidISO = parseManualDateToISO(paymentDateInput || formatDayMonth(todayISO), activeMonth, resolvedYear);
+    const paidISO = parseManualDateToISO(
+      paymentDateInput || formatDayMonth(todayISO),
+      activeMonth,
+      resolvedYear
+    );
     const paidDM = formatDayMonth(paymentDateInput) || formatDayMonth(paidISO);
     const paidM = getMonthFromRow({ isoDate: paidISO }, activeMonth, resolvedYear);
 
@@ -1536,49 +1513,23 @@ export default function ManufacturerLedger(props) {
                               ✓ Оплачено
                             </span>
 
-                            <label
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '0.25rem',
-                                fontSize: '0.7rem',
-                                fontWeight: '700',
-                                color: '#166534',
-                                background: '#f0fdf4',
-                                border: '1px solid #86efac',
-                                padding: '0.12rem 0.35rem',
-                                borderRadius: '0.35rem'
-                              }}
-                              title="Дата видачі / оплати"
-                            >
-                              <span>опл.</span>
-                              <input
-                                type="text"
-                                value={displayPaidDate}
-                                onChange={(e) => handleRowChange(row.id, 'paidDate', e.target.value)}
-                                placeholder={`ДД.${activeMM}`}
+                            {displayPaidDate && (
+                              <span
                                 style={{
-                                  width: '48px',
-                                  border: 'none',
-                                  background: 'transparent',
                                   fontSize: '0.7rem',
                                   fontWeight: '800',
                                   color: '#15803d',
-                                  padding: 0
+                                  background: '#f0fdf4',
+                                  border: '1px solid #86efac',
+                                  padding: '0.16rem 0.45rem',
+                                  borderRadius: '0.35rem'
                                 }}
-                              />
-                            </label>
+                              >
+                                опл. {displayPaidDate}
+                              </span>
+                            )}
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleRowChange(
-                                  row.id,
-                                  'paySource',
-                                  paySource === 'advance' ? 'separate' : 'advance'
-                                )
-                              }
-                              title="Натисни, щоб змінити: списати з авансу чи окрема оплата"
+                            <span
                               style={{
                                 background: paySource === 'advance' ? '#dcfce7' : '#e0e7ff',
                                 color: paySource === 'advance' ? '#166534' : '#3730a3',
@@ -1586,12 +1537,11 @@ export default function ManufacturerLedger(props) {
                                 padding: '0.18rem 0.5rem',
                                 borderRadius: '0.35rem',
                                 fontSize: '0.7rem',
-                                fontWeight: '700',
-                                cursor: 'pointer'
+                                fontWeight: '700'
                               }}
                             >
                               {paySource === 'advance' ? '💰 з авансу' : '💳 окрема оплата'}
-                            </button>
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1850,15 +1800,13 @@ export default function ManufacturerLedger(props) {
                 background: '#f8fafc',
                 padding: '0.3rem 0.55rem',
                 borderRadius: '0.45rem',
-                border: '1px solid #cbd5e1',
-                opacity: isPaymentActivated ? 1 : 0.65
+                border: '1px solid #cbd5e1'
               }}
-              title="Дата видачі та фактичної оплати"
+              title="Вкажи дату оплати перед підтвердженням"
             >
               <span>Дата опл.:</span>
               <input
                 type="text"
-                disabled={!isPaymentActivated}
                 value={paymentDateInput}
                 onChange={(e) => setPaymentDateInput(e.target.value)}
                 placeholder={`ДД.${activeMM}`}
@@ -1881,13 +1829,11 @@ export default function ManufacturerLedger(props) {
                 background: '#f1f5f9',
                 padding: '0.2rem',
                 borderRadius: '0.5rem',
-                border: '1px solid #cbd5e1',
-                opacity: isPaymentActivated ? 1 : 0.6
+                border: '1px solid #cbd5e1'
               }}
             >
               <button
                 type="button"
-                disabled={!isPaymentActivated}
                 onClick={() => setSelectedPaySource('advance')}
                 style={{
                   background: selectedPaySource === 'advance' ? '#16a34a' : 'transparent',
@@ -1897,14 +1843,13 @@ export default function ManufacturerLedger(props) {
                   borderRadius: '0.35rem',
                   fontSize: '0.78rem',
                   fontWeight: '800',
-                  cursor: isPaymentActivated ? 'pointer' : 'not-allowed'
+                  cursor: 'pointer'
                 }}
               >
                 💰 З авансу
               </button>
               <button
                 type="button"
-                disabled={!isPaymentActivated}
                 onClick={() => setSelectedPaySource('separate')}
                 style={{
                   background: selectedPaySource === 'separate' ? '#4f46e5' : 'transparent',
@@ -1914,7 +1859,7 @@ export default function ManufacturerLedger(props) {
                   borderRadius: '0.35rem',
                   fontSize: '0.78rem',
                   fontWeight: '800',
-                  cursor: isPaymentActivated ? 'pointer' : 'not-allowed'
+                  cursor: 'pointer'
                 }}
               >
                 💳 Окрема оплата
@@ -1923,7 +1868,7 @@ export default function ManufacturerLedger(props) {
 
             <button
               type="button"
-              onClick={() => handleConfirmPayment()}
+              onClick={handleConfirmPayment}
               disabled={!isPaymentActivated}
               title={
                 isPaymentActivated
