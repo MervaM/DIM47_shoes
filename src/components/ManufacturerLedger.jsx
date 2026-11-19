@@ -215,7 +215,6 @@ export default function ManufacturerLedger(props) {
     onUpdateExternalRow = null,
     depositsList = [],
     setDepositsList = () => {},
-    carriedAdvanceFromPrev = 0,
     carriedDebtFromPrev = 0,
     exchangeRate = 45.0,
     shoesCatalog = []
@@ -263,9 +262,7 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  const carriedAdvanceBalance = Math.max(0, Number(carriedAdvanceFromPrev) || 0);
-
-  // Рядки поточного місяця (включно з давніми записами без поля month/isoDate/date)
+  // Рядки поточного місяця
   const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
     if (!r.month && !r.isoDate && !r.date) return true;
@@ -273,8 +270,7 @@ export default function ManufacturerLedger(props) {
     return orderMonth === activeMonth;
   });
 
-  // Якщо пара з цього місяця оплачена іншим місяцем, в цьому місяці вона лишається як створена пара,
-  // а її фінансова оплата переноситься в paidMonth (або показується в paidMonth, якщо це інший місяць)
+  // Неоплачені пари з попередніх місяців
   const unpaidCarriedFromPrev = externalRows.filter((r) => {
     if (r.type !== 'item' || r.isPaid || r.isEditing) return false;
     const storageM = r._storageMonthKey || activeMonth;
@@ -282,6 +278,7 @@ export default function ManufacturerLedger(props) {
     return orderMonth < activeMonth;
   });
 
+  // Пари з інших місяців, оплачені саме датою цього місяця
   const paidInThisMonthFromOtherMonths = externalRows.filter((r) => {
     if (r.type !== 'item' || !r.isPaid || r.isEditing) return false;
     const storageM = r._storageMonthKey || activeMonth;
@@ -537,8 +534,7 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  const monthDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  const totalAvailableAdvanceUAH = carriedAdvanceBalance + monthDepositsSum;
+  const totalAvailableAdvanceUAH = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
   const remainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
   const totalDebtWithCarryUAH = unpaidUAH + (Number(carriedDebtFromPrev) || 0);
 
@@ -914,21 +910,6 @@ export default function ManufacturerLedger(props) {
                 <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
                   💰 Аванси ({activeMonth}):
                 </span>
-
-                {carriedAdvanceBalance > 0 && (
-                  <div
-                    style={{
-                      fontSize: '0.72rem',
-                      background: '#f0fdf4',
-                      color: '#15803d',
-                      padding: '0.25rem 0.45rem',
-                      borderRadius: '0.35rem',
-                      fontWeight: '700'
-                    }}
-                  >
-                    Перенесено з минулих місяців: <strong>{carriedAdvanceBalance.toFixed(0)} грн</strong>
-                  </div>
-                )}
 
                 <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select

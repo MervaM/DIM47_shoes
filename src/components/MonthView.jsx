@@ -68,44 +68,6 @@ function getRowPaidMonth(row, fallbackMonthKey) {
   return getRowOrderMonth(row, fallbackMonthKey);
 }
 
-function calculateCarriedAdvance(allMonthsMap, currentMonthKey) {
-  let prevDepositsSum = 0;
-  let prevPaidFromAdvanceUAH = 0;
-
-  const sortedKeys = Object.keys(allMonthsMap || {}).sort();
-
-  sortedKeys.forEach((key) => {
-    const mData = allMonthsMap[key] || {};
-    const parts = key.split('-');
-    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
-
-    if (key < currentMonthKey) {
-      const mDeposits = getDepositsForMonth(mData, key, mIdx);
-      mDeposits.forEach((d) => {
-        prevDepositsSum += Number(d.amount) || 0;
-      });
-    }
-
-    const rows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
-    rows.forEach((row) => {
-      if (row.type !== 'item' || row.isEditing || !row.isPaid) return;
-      if (row.paySource === 'separate') return;
-
-      const paidM = getRowPaidMonth(row, key);
-      if (paidM < currentMonthKey) {
-        const qty = Number(row.quantity) || 0;
-        const costUSD = Number(row.customCostUSD) || 0;
-        const patternUAH = Number(row.patternCostUAH) || 0;
-        const rate = Number(row.rowRate) || Number(mData.milaRate) || 45;
-        prevPaidFromAdvanceUAH += qty * costUSD * rate + patternUAH;
-      }
-    });
-  });
-
-  // Не переносимо від'ємний залишок авансу в наступні місяці
-  return Math.max(0, prevDepositsSum - prevPaidFromAdvanceUAH);
-}
-
 function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   const seenIds = new Set();
   const result = [];
@@ -336,7 +298,6 @@ export default function MonthView() {
     }
   };
 
-  const carriedAdvanceFromPrev = calculateCarriedAdvance(allMonthsMap, monthKey);
   const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
   const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
 
@@ -468,7 +429,6 @@ export default function MonthView() {
               }
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
-              carriedAdvanceFromPrev={carriedAdvanceFromPrev}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
