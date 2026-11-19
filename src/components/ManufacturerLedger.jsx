@@ -1,5 +1,52 @@
 import React, { useState, useRef } from 'react';
 
+const UKRAINIAN_MONTH_MAP = {
+  'січень': '01',
+  'січня': '01',
+  'лютий': '02',
+  'лютого': '02',
+  'березень': '03',
+  'березня': '03',
+  'квітень': '04',
+  'квітня': '04',
+  'травень': '05',
+  'травня': '05',
+  'червень': '06',
+  'червня': '06',
+  'липень': '07',
+  'липня': '07',
+  'серпень': '08',
+  'серпня': '08',
+  'вересень': '09',
+  'вересня': '09',
+  'жовтень': '10',
+  'жовтня': '10',
+  'листопад': '11',
+  'листопада': '11',
+  'грудень': '12',
+  'грудня': '12'
+};
+
+function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
+  if (!rawMonth) return `${fallbackYear}-07`;
+  const str = String(rawMonth).trim().toLowerCase();
+
+  if (/^\d{4}-\d{2}$/.test(str)) {
+    return str;
+  }
+
+  if (/^\d{1,2}$/.test(str)) {
+    const mm = str.padStart(2, '0');
+    return `${fallbackYear}-${mm}`;
+  }
+
+  if (UKRAINIAN_MONTH_MAP[str]) {
+    return `${fallbackYear}-${UKRAINIAN_MONTH_MAP[str]}`;
+  }
+
+  return str;
+}
+
 function formatDayMonth(val) {
   if (!val || typeof val !== 'string') return '';
   const trimmed = val.trim();
@@ -23,6 +70,10 @@ function getMonthFromDate(isoDate, fallbackMonth) {
 export default function ManufacturerLedger({
   manufacturerName,
   paymentMode = 'prepaid',
+  selectedMonth,
+  month,
+  selectedYear,
+  year,
   rows = [],
   setRows,
   depositsList = [],
@@ -34,13 +85,12 @@ export default function ManufacturerLedger({
   shoesCatalog = []
 }) {
   const todayISO = new Date().toISOString().slice(0, 10);
-  const defaultMonth = todayISO.slice(0, 7);
-
-  const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
-  const [newMonthInput, setNewMonthInput] = useState('');
+  const currentYear = String(selectedYear || year || todayISO.slice(0, 4));
+  const rawMonthInput = selectedMonth || month || todayISO.slice(0, 7);
+  const activeMonth = normalizeMonthKey(rawMonthInput, currentYear);
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  const [newDepositDate, setNewDepositDate] = useState(todayISO);
+  const [newDepositDate, setNewDepositDate] = useState(`${activeMonth}-01`);
   const [newDepositAmount, setNewDepositAmount] = useState('');
   const rowRefs = useRef({});
 
@@ -48,40 +98,24 @@ export default function ManufacturerLedger({
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  const availableMonths = Array.from(
-    new Set([
-      defaultMonth,
-      selectedMonth,
-      ...rows.map((r) => r.month || getMonthFromDate(r.isoDate, defaultMonth)),
-      ...depositsList.map((d) => d.month || getMonthFromDate(d.isoDate, defaultMonth))
-    ])
-  ).sort();
-
-  const handleCreateMonth = () => {
-    const clean = newMonthInput.trim();
-    if (!clean) return;
-    setSelectedMonth(clean);
-    setNewMonthInput('');
-  };
-
   const monthRows = rows.filter((r) => {
-    const rowMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
-    return rowMonth === selectedMonth;
+    const rowMonth = normalizeMonthKey(r.month || getMonthFromDate(r.isoDate, activeMonth), currentYear);
+    return rowMonth === activeMonth;
   });
 
   const monthDeposits = depositsList.filter((d) => {
-    const depMonth = d.month || getMonthFromDate(d.isoDate, defaultMonth);
-    return depMonth === selectedMonth;
+    const depMonth = normalizeMonthKey(d.month || getMonthFromDate(d.isoDate, activeMonth), currentYear);
+    return depMonth === activeMonth;
   });
 
   const handleAddRow = () => {
-    const initialDate = `${selectedMonth}-01`;
+    const initialDate = `${activeMonth}-01`;
     setRows([
       ...rows,
       {
         id: Date.now(),
         isoDate: initialDate,
-        month: selectedMonth,
+        month: activeMonth,
         date: formatDayMonth(initialDate),
         type: 'item',
         shoeId: '',
@@ -103,8 +137,8 @@ export default function ManufacturerLedger({
       ...rows,
       {
         id: Date.now(),
-        isoDate: `${selectedMonth}-01`,
-        month: selectedMonth,
+        isoDate: `${activeMonth}-01`,
+        month: activeMonth,
         type: 'subtotal',
         note: '',
         manualSumUAH: 0,
@@ -115,8 +149,8 @@ export default function ManufacturerLedger({
 
   const handleAddDeposit = () => {
     if (!newDepositAmount) return;
-    const chosenDate = newDepositDate || `${selectedMonth}-01`;
-    const depMonth = getMonthFromDate(chosenDate, selectedMonth);
+    const chosenDate = newDepositDate || `${activeMonth}-01`;
+    const depMonth = normalizeMonthKey(getMonthFromDate(chosenDate, activeMonth), currentYear);
     const item = {
       id: Date.now(),
       isoDate: chosenDate,
@@ -125,9 +159,6 @@ export default function ManufacturerLedger({
       amount: Number(newDepositAmount) || 0
     };
     setDepositsList([...depositsList, item]);
-    if (depMonth !== selectedMonth) {
-      setSelectedMonth(depMonth);
-    }
     setNewDepositAmount('');
   };
 
@@ -143,11 +174,7 @@ export default function ManufacturerLedger({
 
           if (field === 'isoDate') {
             updated.date = formatDayMonth(value);
-            const nextMonth = getMonthFromDate(value, selectedMonth);
-            updated.month = nextMonth;
-            if (nextMonth !== selectedMonth) {
-              setSelectedMonth(nextMonth);
-            }
+            updated.month = normalizeMonthKey(getMonthFromDate(value, activeMonth), currentYear);
           }
 
           if (field === 'shoeId' && value) {
@@ -274,11 +301,9 @@ export default function ManufacturerLedger({
   const paidChecksList = Object.values(paidGroupsMap);
   const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
   const remainingBalance =
-    paymentMode === 'prepaid'
-      ? totalDepositsSum > 0
-        ? totalDepositsSum - paidUAH
-        : unpaidUAH
-      : unpaidUAH;
+    paymentMode === 'prepaid' && totalDepositsSum > 0
+      ? totalDepositsSum - paidUAH
+      : Math.max(0, totalUAH - paidUAH);
 
   const hasCheckedPairs = checkedTotalUAH > 0;
   const showGreenPaidButton = !hasCheckedPairs && paidUAH > 0;
@@ -290,8 +315,8 @@ export default function ManufacturerLedger({
 
     setRows((prevRows) =>
       prevRows.map((r) => {
-        const rMonth = r.month || getMonthFromDate(r.isoDate, defaultMonth);
-        if (rMonth === selectedMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
+        const rMonth = normalizeMonthKey(r.month || getMonthFromDate(r.isoDate, activeMonth), currentYear);
+        if (rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
           return {
             ...r,
             isPaid: true,
@@ -493,61 +518,18 @@ export default function ManufacturerLedger({
               </h2>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="input-field"
-                style={{ fontWeight: '700', fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}
-              >
-                {availableMonths.map((m) => (
-                  <option key={m} value={m}>
-                    📅 {m}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="month"
-                value={newMonthInput}
-                onChange={(e) => setNewMonthInput(e.target.value)}
-                style={{
-                  padding: '0.25rem 0.4rem',
-                  fontSize: '0.75rem',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '0.4rem'
-                }}
-              />
-              <button
-                type="button"
-                onClick={handleCreateMonth}
-                style={{
-                  background: '#eef2ff',
-                  color: '#4f46e5',
-                  border: '1px solid #c7d2fe',
-                  padding: '0.3rem 0.65rem',
-                  borderRadius: '0.4rem',
-                  fontSize: '0.75rem',
-                  fontWeight: '700',
-                  cursor: 'pointer'
-                }}
-              >
-                + Місяць
-              </button>
-
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.3rem 0.75rem',
-                  background: '#eef2ff',
-                  color: '#4f46e5',
-                  borderRadius: '9999px',
-                  fontWeight: 'bold'
-                }}
-              >
-                {paymentMode === 'prepaid' ? '✨ По авансу' : '💼 Після видачі'}
-              </span>
-            </div>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                padding: '0.3rem 0.75rem',
+                background: '#eef2ff',
+                color: '#4f46e5',
+                borderRadius: '9999px',
+                fontWeight: 'bold'
+              }}
+            >
+              {paymentMode === 'prepaid' ? '✨ По авансу' : '💼 Після видачі'}
+            </span>
           </div>
 
           <div
@@ -574,7 +556,7 @@ export default function ManufacturerLedger({
                 }}
               >
                 <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
-                  💰 Аванси ({selectedMonth}):
+                  💰 Аванси ({activeMonth}):
                 </span>
 
                 <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
@@ -1302,7 +1284,6 @@ export default function ManufacturerLedger({
               })}
             </tbody>
 
-            {/* ПІДСУМОК ПО ПАРАХ З ГАЛОЧКОЮ: СУМА $ * КУРС + ЛЕКАЛА */}
             <tfoot>
               <tr
                 style={{
@@ -1362,7 +1343,6 @@ export default function ManufacturerLedger({
           </table>
         </div>
 
-        {/* ЗАГАЛЬНА СУМА ТА КНОПКА ОПЛАТИ ЗНИЗУ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1451,7 +1431,7 @@ export default function ManufacturerLedger({
               🧾 Фінансовий чек
             </span>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '900', color: '#14532d', margin: 0 }}>
-              Оплачені замовлення ({selectedMonth})
+              Оплачені замовлення ({activeMonth})
             </h3>
           </div>
 
