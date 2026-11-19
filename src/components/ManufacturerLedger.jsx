@@ -37,7 +37,7 @@ function getLocalTodayISO() {
 
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (rawMonth === undefined || rawMonth === null || rawMonth === '') {
-    return `${fallbackYear}-11`;
+    return `${fallbackYear}-08`;
   }
 
   if (typeof rawMonth === 'object') {
@@ -70,7 +70,7 @@ function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
     return `${fallbackYear}-${UKRAINIAN_MONTH_MAP[str]}`;
   }
 
-  return `${fallbackYear}-11`;
+  return `${fallbackYear}-08`;
 }
 
 function formatDayMonth(val) {
@@ -90,9 +90,8 @@ function parseManualDateToISO(inputStr, activeMonth, fallbackYear) {
   const clean = String(inputStr || '').trim();
   const [yearPart, monthPart] = activeMonth.split('-');
   const y = yearPart || fallbackYear || '2026';
-  const defaultM = monthPart || '11';
+  const defaultM = monthPart || '08';
 
-  // Формат ДД.ММ або ДД/ММ або ДД-ММ або просто ДД
   const dmMatch = clean.match(/^(\d{1,2})(?:[./-](\d{1,2}))?$/);
   if (dmMatch) {
     const day = String(Math.min(31, Math.max(1, Number(dmMatch[1]) || 1))).padStart(2, '0');
@@ -109,13 +108,28 @@ function parseManualDateToISO(inputStr, activeMonth, fallbackYear) {
   return `${y}-${defaultM}-01`;
 }
 
-function getSortableDateValue(item, activeMonth, fallbackYear) {
-  const raw = item?.isoDate || item?.date || `${activeMonth}-01`;
-  const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(raw))
-    ? String(raw)
-    : parseManualDateToISO(raw, activeMonth, fallbackYear);
-  const ts = Date.parse(iso);
-  return Number.isNaN(ts) ? 0 : ts;
+function getNextSequentialDate(existingMonthRows, activeMonth, fallbackYear) {
+  const [, activeMM] = activeMonth.split('-');
+  let maxDay = 0;
+
+  existingMonthRows.forEach((r) => {
+    const rawDate = r.date || formatDayMonth(r.isoDate) || '';
+    const match = String(rawDate).match(/^(\d{1,2})/);
+    if (match) {
+      const d = Number(match[1]);
+      if (d > maxDay && d < 31) {
+        maxDay = d;
+      }
+    }
+  });
+
+  const nextDayNum = maxDay > 0 ? Math.min(31, maxDay + 1) : 1;
+  const nextDayStr = String(nextDayNum).padStart(2, '0');
+  const iso = `${fallbackYear || activeMonth.split('-')[0] || '2026'}-${activeMM}-${nextDayStr}`;
+  return {
+    date: `${nextDayStr}.${activeMM}`,
+    isoDate: iso
+  };
 }
 
 function getMonthFromRow(row, fallbackMonth, fallbackYear) {
@@ -168,18 +182,20 @@ export default function ManufacturerLedger(props) {
       ? currentMonth
       : propActiveMonth !== undefined
       ? propActiveMonth
-      : 10;
+      : 7;
   const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
   const [, activeMM] = activeMonth.split('-');
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
   const [newDepositDateText, setNewDepositDateText] = useState(`01.${activeMM}`);
   const [newDepositAmount, setNewDepositAmount] = useState('');
+  // Ручне редагування суми в полі підсумку (ключ = id рядка підсумку)
+  const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
   const rowRefs = useRef({});
 
   useEffect(() => {
     const [, mm] = activeMonth.split('-');
-    setNewDepositDateText(`01.${mm || '11'}`);
+    setNewDepositDateText(`01.${mm || '08'}`);
   }, [activeMonth]);
 
   const manufacturerShoes = shoesCatalog.filter(
@@ -192,20 +208,25 @@ export default function ManufacturerLedger(props) {
     return rowMonth === activeMonth;
   });
 
+  // Неоплачені позиції та підсумки (саме вони рахуються в проміжок і в неоплачену суму)
+  const activeMonthRows = monthRows.filter((r) => !(r.type === 'item' && r.isPaid));
+  // Оплачені позиції — окремий блок, більше не сумуються
+  const paidMonthRows = monthRows.filter((r) => r.type === 'item' && r.isPaid);
+
   const monthDeposits = depositsList.filter((d) => {
     const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
     return depMonth === activeMonth;
   });
 
   const handleAddRow = () => {
-    const initialISO = `${activeMonth}-01`;
+    const nextSeq = getNextSequentialDate(activeMonthRows, activeMonth, resolvedYear);
     setRows([
       ...rows,
       {
         id: Date.now(),
-        isoDate: initialISO,
+        isoDate: nextSeq.isoDate,
         month: activeMonth,
-        date: `01.${activeMM}`,
+        date: nextSeq.date,
         type: 'item',
         shoeId: '',
         quantity: 1,
@@ -327,122 +348,106 @@ export default function ManufacturerLedger(props) {
     const el = rowRefs.current[rowId];
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.style.background = '#fde047';
+      el.style.background = '#e2e8f0';
       setTimeout(() => {
-        el.style.background = '';
+        el.style.background = '#f1f5f9';
       }, 1200);
     }
   };
 
-  let totalPairs = 0;
-  let totalUSD = 0;
-  let totalUAH = 0;
-  let totalPatternsUAH = 0;
+  // Підрахунки лише по НЕОПЛАЧЕНИХ позиціях
+  let activePairs = 0;
+  let activeUSD = 0;
+  let activeUAH = 0;
+  let activePatternsUAH = 0;
 
   let checkedPairs = 0;
   let checkedUSD = 0;
   let checkedPatternsUAH = 0;
-  let checkedTotalUAH = 0;
+  let checkedRate = exchangeRate || 45.0;
+  let checkedCalculatedUAH = 0;
 
-  let paidPairs = 0;
-  let paidUAH = 0;
-  let unpaidUAH = 0;
-
-  const paidGroupsMap = {};
-
-  monthRows.forEach((row) => {
+  activeMonthRows.forEach((row) => {
     if (row.type === 'item') {
       const qty = Number(row.quantity) || 0;
       const costUSD = Number(row.customCostUSD) || 0;
       const patternUAH = Number(row.patternCostUAH) || 0;
-      const rRate = Number(row.rowRate) || 0;
-      const isPaid = Boolean(row.isPaid);
+      const rRate = Number(row.rowRate) || exchangeRate || 45.0;
       const isChecked = Boolean(row.isSelectedForPay);
 
       const rowUSD = qty * costUSD;
       const shoePartUAH = rowUSD * rRate;
       const rowFullUAH = shoePartUAH + patternUAH;
 
-      totalPairs += qty;
-      totalUSD += rowUSD;
-      totalPatternsUAH += patternUAH;
-      totalUAH += rowFullUAH;
+      activePairs += qty;
+      activeUSD += rowUSD;
+      activePatternsUAH += patternUAH;
+      activeUAH += rowFullUAH;
 
-      if (!isPaid && isChecked) {
+      if (isChecked) {
         checkedPairs += qty;
         checkedUSD += rowUSD;
         checkedPatternsUAH += patternUAH;
-        checkedTotalUAH += rowFullUAH;
+        checkedRate = rRate;
+        checkedCalculatedUAH += rowFullUAH;
       }
-
-      if (isPaid) {
-        paidPairs += qty;
-        paidUAH += rowFullUAH;
-
-        const labelDate = formatDayMonth(row.isoDate || row.date) || '—';
-        if (!paidGroupsMap[labelDate]) {
-          paidGroupsMap[labelDate] = {
-            date: labelDate,
-            totalSum: 0,
-            rowIds: []
-          };
-        }
-        paidGroupsMap[labelDate].totalSum += rowFullUAH;
-        paidGroupsMap[labelDate].rowIds.push(row.id);
-      } else {
-        unpaidUAH += rowFullUAH;
-      }
-    } else if (row.type === 'subtotal') {
-      const subVal = Number(row.manualSumUAH) || 0;
-      unpaidUAH += subVal;
     }
   });
 
-  const paidChecksList = Object.values(paidGroupsMap);
+  // Підрахунки по ОПЛАЧЕНИХ позиціях (окремий блок)
+  let paidPairs = 0;
+  let paidUAH = 0;
 
-  // Списання оплачених позицій із датою >= найранішого авансу (або загального авансу місяця)
-  const earliestDepositTs =
-    monthDeposits.length > 0
-      ? Math.min(...monthDeposits.map((d) => getSortableDateValue(d, activeMonth, resolvedYear)))
-      : null;
+  paidMonthRows.forEach((row) => {
+    const qty = Number(row.quantity) || 0;
+    const costUSD = Number(row.customCostUSD) || 0;
+    const patternUAH = Number(row.patternCostUAH) || 0;
+    const rRate = Number(row.rowRate) || 0;
+    paidPairs += qty;
+    paidUAH += qty * costUSD * rRate + patternUAH;
+  });
 
   const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-
-  const eligiblePaidForDepositUAH =
-    earliestDepositTs === null
-      ? paidUAH
-      : monthRows.reduce((sum, row) => {
-          if (row.type !== 'item' || !row.isPaid) return sum;
-          const rowTs = getSortableDateValue(row, activeMonth, resolvedYear);
-          if (rowTs >= earliestDepositTs) {
-            const qty = Number(row.quantity) || 0;
-            const costUSD = Number(row.customCostUSD) || 0;
-            const patternUAH = Number(row.patternCostUAH) || 0;
-            const rRate = Number(row.rowRate) || 0;
-            return sum + (qty * costUSD * rRate + patternUAH);
-          }
-          return sum;
-        }, 0);
-
   const remainingBalance =
     paymentMode === 'prepaid' && totalDepositsSum > 0
-      ? totalDepositsSum - eligiblePaidForDepositUAH
-      : Math.max(0, totalUAH - paidUAH);
+      ? totalDepositsSum - activeUAH
+      : activeUAH;
 
-  const hasCheckedPairs = checkedTotalUAH > 0;
-  const showGreenPaidButton = !hasCheckedPairs && paidUAH > 0;
+  const hasCheckedPairs = checkedPairs > 0;
 
-  const handlePaySelectedInterval = () => {
-    if (checkedTotalUAH <= 0) return;
+  const getSubtotalFinalUAH = (subtotalId) => {
+    const rawManual = manualSubtotalAmounts[subtotalId];
+    if (rawManual !== undefined && String(rawManual).trim() !== '') {
+      const num = Number(rawManual);
+      if (!Number.isNaN(num)) return num;
+    }
+    return checkedCalculatedUAH;
+  };
 
+  // При натисканні на суму/кнопку оплати: пари стають оплаченими і "прилипають" до блоку оплачених
+  const handlePaySubtotal = (subtotalId) => {
+    if (!hasCheckedPairs) return;
+
+    const finalAmountUAH = subtotalId ? getSubtotalFinalUAH(subtotalId) : checkedCalculatedUAH;
+    const diffUAH = finalAmountUAH - checkedCalculatedUAH;
     const nowShort = formatDayMonth(todayISO);
 
-    setRows((prevRows) =>
-      prevRows.map((r) => {
-        const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-        if (rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
+    setRows((prevRows) => {
+      const targetIds = prevRows
+        .filter((r) => {
+          const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
+          return rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay;
+        })
+        .map((r) => r.id);
+
+      const firstId = targetIds[0];
+
+      return prevRows.map((r) => {
+        if (targetIds.includes(r.id)) {
+          const adjust = r.id === firstId ? diffUAH : 0;
           return {
             ...r,
+            patternCostUAH: (Number(r.patternCostUAH) || 0) + adjust,
             isPaid: true,
             isSelectedForPay: false,
             paidAt: nowShort,
@@ -450,14 +455,19 @@ export default function ManufacturerLedger(props) {
           };
         }
         return r;
-      })
-    );
+      });
+    });
+
+    if (subtotalId) {
+      setManualSubtotalAmounts((prev) => {
+        const copy = { ...prev };
+        delete copy[subtotalId];
+        return copy;
+      });
+    }
   };
 
   let runningPairNumber = 0;
-  const formulaHint = hasCheckedPairs
-    ? `$${checkedUSD.toFixed(2)} × курс + ${checkedPatternsUAH.toFixed(0)} лекала = ${checkedTotalUAH.toFixed(0)} грн`
-    : 'Постав галочки біля пар для розрахунку проміжку';
 
   return (
     <div
@@ -699,7 +709,7 @@ export default function ManufacturerLedger(props) {
                       fontWeight: '700',
                       textAlign: 'center'
                     }}
-                    title="Введіть дату вручну у форматі ДД.ММ"
+                    title="Дата вручну ДД.ММ"
                   />
 
                   <input
@@ -820,11 +830,9 @@ export default function ManufacturerLedger(props) {
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
                 {paidUAH.toFixed(0)} грн
               </span>
-              {totalPatternsUAH > 0 && (
-                <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: '700' }}>
-                  в т.ч. лекала: {totalPatternsUAH.toFixed(0)} грн
-                </span>
-              )}
+              <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '700' }}>
+                {paidPairs} пар закрито
+              </span>
             </div>
 
             <div
@@ -839,7 +847,7 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
-                {totalDepositsSum > 0 ? 'Залишок авансу:' : 'Залишок / Борг:'}
+                {totalDepositsSum > 0 ? 'Аванс мінус активні пари:' : 'Залишок / До оплати:'}
               </span>
               <span
                 style={{
@@ -859,7 +867,7 @@ export default function ManufacturerLedger(props) {
           </div>
         </div>
 
-        {/* ТАБЛИЦЯ ПОЗИЦІЙ */}
+        {/* ТАБЛИЦЯ НЕОПЛАЧЕНИХ ПОЗИЦІЙ */}
         <div
           style={{
             overflowX: 'auto',
@@ -900,16 +908,29 @@ export default function ManufacturerLedger(props) {
                   Долар ($)
                 </th>
                 <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '75px' }}>Курс</th>
-                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '145px' }}>
+                <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right', width: '165px' }}>
                   Вартість в грн
                 </th>
                 <th style={{ padding: '0.6rem 0.5rem', width: '50px' }}></th>
               </tr>
             </thead>
             <tbody>
-              {monthRows.map((row) => {
+              {activeMonthRows.map((row) => {
                 if (row.type === 'subtotal') {
                   const isCollapsed = row.isCollapsed || false;
+                  const finalAmount = getSubtotalFinalUAH(row.id);
+                  const currentInputValue =
+                    manualSubtotalAmounts[row.id] !== undefined
+                      ? manualSubtotalAmounts[row.id]
+                      : hasCheckedPairs
+                      ? String(Math.round(checkedCalculatedUAH))
+                      : '';
+
+                  const calcSummaryText = hasCheckedPairs
+                    ? `$${checkedUSD.toFixed(2)} × ${checkedRate}${
+                        checkedPatternsUAH > 0 ? ` + ${checkedPatternsUAH.toFixed(0)} лекала` : ''
+                      } = ${checkedCalculatedUAH.toFixed(0)} грн`
+                    : 'Постав галочки біля пар для розрахунку проміжку';
 
                   return (
                     <tr
@@ -918,8 +939,16 @@ export default function ManufacturerLedger(props) {
                     >
                       <td></td>
                       <td colSpan="6" style={{ padding: '0.6rem 0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            flexWrap: 'wrap'
+                          }}
+                        >
                           <button
+                            type="button"
                             onClick={() => handleRowChange(row.id, 'isCollapsed', !isCollapsed)}
                             style={{
                               background: '#f59e0b',
@@ -938,33 +967,52 @@ export default function ManufacturerLedger(props) {
                             Підсумок проміжку:
                           </span>
                           {!isCollapsed && (
-                            <input
-                              type="text"
-                              readOnly
-                              value={row.note || formulaHint}
-                              style={{
-                                flex: 1,
-                                padding: '0.2rem 0.4rem',
-                                border: '1px solid #d97706',
-                                borderRadius: '0.3rem',
-                                fontSize: '0.8rem',
-                                background: '#fff',
-                                color: '#78350f',
-                                fontWeight: '600'
-                              }}
-                            />
+                            <>
+                              <span
+                                style={{
+                                  fontSize: '0.75rem',
+                                  color: '#78350f',
+                                  fontWeight: '700'
+                                }}
+                              >
+                                {calcSummaryText}
+                              </span>
+                              <input
+                                type="number"
+                                value={currentInputValue}
+                                onChange={(e) =>
+                                  setManualSubtotalAmounts({
+                                    ...manualSubtotalAmounts,
+                                    [row.id]: e.target.value
+                                  })
+                                }
+                                placeholder="Сума грн"
+                                style={{
+                                  width: '105px',
+                                  padding: '0.2rem 0.45rem',
+                                  border: '1px solid #d97706',
+                                  borderRadius: '0.3rem',
+                                  fontSize: '0.82rem',
+                                  background: '#fff',
+                                  color: '#78350f',
+                                  fontWeight: '800',
+                                  textAlign: 'right'
+                                }}
+                                title="Редагуй суму вручну при потребі (наприклад, на округлення)"
+                              />
+                            </>
                           )}
                         </div>
                       </td>
                       <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
                         <button
                           type="button"
-                          onClick={handlePaySelectedInterval}
+                          onClick={() => handlePaySubtotal(row.id)}
                           disabled={!hasCheckedPairs}
                           title={
                             hasCheckedPairs
-                              ? 'Натисніть, щоб оплатити обраний проміжок'
-                              : 'Поставте галочку біля пар для розрахунку суми'
+                              ? 'Натисніть, щоб оплатити та перенести в оплачені'
+                              : 'Поставте галочку біля пар'
                           }
                           style={{
                             background: hasCheckedPairs ? '#16a34a' : '#fef3c7',
@@ -978,13 +1026,12 @@ export default function ManufacturerLedger(props) {
                             whiteSpace: 'nowrap'
                           }}
                         >
-                          {hasCheckedPairs
-                            ? `${checkedTotalUAH.toFixed(0)} грн • Оплатити`
-                            : '0 грн'}
+                          {hasCheckedPairs ? `${finalAmount.toFixed(0)} грн • Оплатити` : '0 грн'}
                         </button>
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <button
+                          type="button"
                           onClick={() => handleDeleteRow(row.id)}
                           style={{
                             background: 'none',
@@ -1009,7 +1056,6 @@ export default function ManufacturerLedger(props) {
                 const costUSD = Number(row.customCostUSD) || 0;
                 const patternUAH = Number(row.patternCostUAH) || 0;
                 const rRate = Number(row.rowRate) || 0;
-                const isPaid = Boolean(row.isPaid);
                 const isChecked = Boolean(row.isSelectedForPay);
 
                 const isEditing = row.isEditing !== undefined ? row.isEditing : !row.shoeId;
@@ -1025,14 +1071,9 @@ export default function ManufacturerLedger(props) {
                 return (
                   <tr
                     key={row.id}
-                    ref={(el) => (rowRefs.current[row.id] = el)}
                     style={{
-                      background: isPaid
-                        ? '#f1f5f9'
-                        : isChecked
-                        ? '#eef2ff'
-                        : '#ffffff',
-                      color: isPaid ? '#475569' : '#0f172a',
+                      background: isChecked ? '#eef2ff' : '#ffffff',
+                      color: '#0f172a',
                       borderBottom: '1px solid #e2e8f0',
                       transition: 'background 0.2s'
                     }}
@@ -1040,29 +1081,20 @@ export default function ManufacturerLedger(props) {
                     {!isEditing ? (
                       <>
                         <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                          {isPaid ? (
-                            <span
-                              title="Оплачено"
-                              style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}
-                            >
-                              ✓
-                            </span>
-                          ) : (
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
-                              }
-                              style={{
-                                width: '18px',
-                                height: '18px',
-                                cursor: 'pointer',
-                                accentColor: '#4f46e5'
-                              }}
-                              title="Відмітити пару для оплати"
-                            />
-                          )}
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) =>
+                              handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
+                            }
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              cursor: 'pointer',
+                              accentColor: '#4f46e5'
+                            }}
+                            title="Відмітити пару для оплати"
+                          />
                         </td>
                         <td
                           style={{
@@ -1150,13 +1182,10 @@ export default function ManufacturerLedger(props) {
                             padding: '0.6rem 0.75rem',
                             textAlign: 'right',
                             fontWeight: '900',
-                            color: isPaid ? '#15803d' : '#0f172a'
+                            color: '#0f172a'
                           }}
                         >
                           <div>{rowFullUAH.toFixed(0)} грн</div>
-                          {isPaid && (
-                            <div style={{ fontSize: '0.7rem', color: '#15803d' }}>(оплачено)</div>
-                          )}
                         </td>
                         <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                           <div
@@ -1183,6 +1212,7 @@ export default function ManufacturerLedger(props) {
                               ✎
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleDeleteRow(row.id)}
                               style={{
                                 background: 'none',
@@ -1210,22 +1240,20 @@ export default function ManufacturerLedger(props) {
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              {!isPaid && (
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={(e) =>
-                                    handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
-                                  }
-                                  style={{
-                                    width: '18px',
-                                    height: '18px',
-                                    cursor: 'pointer',
-                                    accentColor: '#4f46e5'
-                                  }}
-                                  title="Відмітити пару для оплати"
-                                />
-                              )}
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) =>
+                                  handleRowChange(row.id, 'isSelectedForPay', e.target.checked)
+                                }
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  cursor: 'pointer',
+                                  accentColor: '#4f46e5'
+                                }}
+                                title="Відмітити пару для оплати"
+                              />
                               <span
                                 style={{ fontSize: '0.75rem', fontWeight: '800', color: '#4f46e5' }}
                               >
@@ -1414,7 +1442,7 @@ export default function ManufacturerLedger(props) {
                     whiteSpace: 'nowrap'
                   }}
                 >
-                  {hasCheckedPairs ? `${checkedPairs} шт` : `${totalPairs} шт`}
+                  {hasCheckedPairs ? `${checkedPairs} шт` : `${activePairs} шт`}
                 </td>
                 <td
                   colSpan="2"
@@ -1425,29 +1453,29 @@ export default function ManufacturerLedger(props) {
                     fontSize: '0.8rem'
                   }}
                 >
-                  {hasCheckedPairs ? 'РАЗОМ (З ГАЛОЧКОЮ):' : 'РАЗОМ:'}
+                  {hasCheckedPairs ? 'РАЗОМ (З ГАЛОЧКОЮ):' : 'РАЗОМ (НЕОПЛАЧЕНО):'}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', color: '#0f172a' }}>
-                  <div>${hasCheckedPairs ? checkedUSD.toFixed(2) : totalUSD.toFixed(2)}</div>
-                  {(hasCheckedPairs ? checkedPatternsUAH : totalPatternsUAH) > 0 && (
+                  <div>${hasCheckedPairs ? checkedUSD.toFixed(2) : activeUSD.toFixed(2)}</div>
+                  {(hasCheckedPairs ? checkedPatternsUAH : activePatternsUAH) > 0 && (
                     <div style={{ fontSize: '0.72rem', color: '#d97706', fontWeight: '700' }}>
-                      + {(hasCheckedPairs ? checkedPatternsUAH : totalPatternsUAH).toFixed(0)} грн лекала
+                      + {(hasCheckedPairs ? checkedPatternsUAH : activePatternsUAH).toFixed(0)} грн лекала
                     </div>
                   )}
                 </td>
                 <td></td>
                 <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right', fontSize: '0.95rem' }}>
                   <div
-                    onClick={() => hasCheckedPairs && handlePaySelectedInterval()}
+                    onClick={() => hasCheckedPairs && handlePaySubtotal(null)}
                     style={{
                       color: hasCheckedPairs ? '#16a34a' : '#0f172a',
                       cursor: hasCheckedPairs ? 'pointer' : 'default'
                     }}
                   >
                     {hasCheckedPairs
-                      ? `${checkedTotalUAH.toFixed(0)} грн`
-                      : `${totalUAH.toFixed(0)} грн`}
+                      ? `${checkedCalculatedUAH.toFixed(0)} грн`
+                      : `${activeUAH.toFixed(0)} грн`}
                   </div>
                 </td>
                 <td></td>
@@ -1468,6 +1496,7 @@ export default function ManufacturerLedger(props) {
         >
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
+              type="button"
               onClick={handleAddRow}
               className="btn-primary"
               style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
@@ -1475,6 +1504,7 @@ export default function ManufacturerLedger(props) {
               + Додати пару
             </button>
             <button
+              type="button"
               onClick={handleAddSubtotal}
               className="btn-warning"
               style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
@@ -1485,18 +1515,15 @@ export default function ManufacturerLedger(props) {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a' }}>
-              Загальна сума: {totalUAH.toFixed(0)} грн
+              Неоплачена сума: {activeUAH.toFixed(0)} грн
             </div>
 
             <button
               type="button"
-              onClick={handlePaySelectedInterval}
+              onClick={() => hasCheckedPairs && handlePaySubtotal(null)}
+              disabled={!hasCheckedPairs}
               style={{
-                background: showGreenPaidButton
-                  ? '#16a34a'
-                  : hasCheckedPairs
-                  ? '#4f46e5'
-                  : '#94a3b8',
+                background: hasCheckedPairs ? '#16a34a' : '#94a3b8',
                 color: '#ffffff',
                 border: 'none',
                 padding: '0.55rem 1.25rem',
@@ -1507,20 +1534,22 @@ export default function ManufacturerLedger(props) {
                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
               }}
             >
-              {showGreenPaidButton
-                ? `${paidUAH.toFixed(0)} грн ✓ (оплачено)`
-                : hasCheckedPairs
-                ? `${checkedTotalUAH.toFixed(0)} грн • Оплатити`
+              {hasCheckedPairs
+                ? `${checkedCalculatedUAH.toFixed(0)} грн • Оплатити`
                 : '0 грн • Оплатити'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* НИЖНІЙ ЧЕК */}
+      {/* ОКРЕМИЙ БЛОК ОПЛАЧЕНИХ ЗАМОВЛЕНЬ (СІРІ, НЕ СУМУЮТЬСЯ ДАЛІ, ЗЕЛЕНА КНОПКА ПІД КОЖНИМ) */}
       <div
         className="card"
-        style={{ border: '2px solid #86efac', background: '#f0fdf4', padding: '1rem' }}
+        style={{
+          border: '2px solid #cbd5e1',
+          background: '#f8fafc',
+          padding: '1rem'
+        }}
       >
         <div
           style={{
@@ -1537,21 +1566,21 @@ export default function ManufacturerLedger(props) {
               style={{
                 fontSize: '0.7rem',
                 fontWeight: '800',
-                color: '#16a34a',
+                color: '#475569',
                 textTransform: 'uppercase'
               }}
             >
-              🧾 Фінансовий чек
+              🔒 Закриті позиції (не сумуються)
             </span>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '900', color: '#14532d', margin: 0 }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '900', color: '#334155', margin: 0 }}>
               Оплачені замовлення ({activeMonth})
             </h3>
           </div>
 
           <div
             style={{
-              background: '#16a34a',
-              color: '#ffffff',
+              background: '#e2e8f0',
+              color: '#334155',
               padding: '0.4rem 0.85rem',
               borderRadius: '0.6rem',
               fontWeight: '900',
@@ -1562,50 +1591,101 @@ export default function ManufacturerLedger(props) {
           </div>
         </div>
 
-        {paidChecksList.length === 0 ? (
+        {paidMonthRows.length === 0 ? (
           <div
             style={{
               padding: '1.25rem',
               textAlign: 'center',
-              color: '#15803d',
+              color: '#64748b',
               fontSize: '0.85rem',
-              background: '#ffffff',
+              background: '#f1f5f9',
               borderRadius: '0.5rem'
             }}
           >
-            Ще немає оплачених позицій. Поставте галочку біля пар та натисніть оплату.
+            Ще немає оплачених замовлень. Відмітьте пари галочкою та натисніть оплату в підсумку.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            {paidChecksList.map((chk) => (
-              <div
-                key={chk.date}
-                onClick={() => {
-                  if (chk.rowIds.length > 0) {
-                    scrollToRow(chk.rowIds[0]);
-                  }
-                }}
-                style={{
-                  background: '#ffffff',
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: '0.5rem',
-                  border: '1px solid #bbf7d0',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                }}
-              >
-                <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#374151' }}>
-                  {chk.date} — <strong>{chk.totalSum.toFixed(0)} грн</strong> (оплачено)
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            {paidMonthRows.map((row, idx) => {
+              const qty = Number(row.quantity) || 0;
+              const costUSD = Number(row.customCostUSD) || 0;
+              const patternUAH = Number(row.patternCostUAH) || 0;
+              const rRate = Number(row.rowRate) || 0;
+              const rowFullUAH = qty * costUSD * rRate + patternUAH;
+              const shoeInfo = shoesCatalog.find((s) => s.id === row.shoeId);
+              const displayName = shoeInfo
+                ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
+                : 'Модель';
+              const displayDate = row.date || formatDayMonth(row.isoDate) || '—';
+
+              return (
+                <div
+                  key={row.id}
+                  ref={(el) => (rowRefs.current[row.id] = el)}
+                  style={{
+                    background: '#f1f5f9',
+                    color: '#64748b',
+                    padding: '0.75rem',
+                    borderRadius: '0.6rem',
+                    border: '1px solid #cbd5e1',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '0.5rem',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <strong style={{ color: '#475569' }}>#{idx + 1}</strong>
+                      <span>{displayDate}</span>
+                      <strong style={{ color: '#475569' }}>{displayName}</strong>
+                      <span>• {qty} шт</span>
+                      <span>
+                        • ${(qty * costUSD).toFixed(0)} (курс {rRate})
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: '800', color: '#475569' }}>
+                      {rowFullUAH.toFixed(0)} грн
+                    </div>
+                  </div>
+
+                  {/* Зелена кнопка під кожним оплаченим замовленням */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      disabled
+                      style={{
+                        background: '#16a34a',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '0.35rem 0.9rem',
+                        borderRadius: '0.45rem',
+                        fontWeight: '800',
+                        fontSize: '0.8rem',
+                        cursor: 'default'
+                      }}
+                    >
+                      ✓ Оплачено ({rowFullUAH.toFixed(0)} грн)
+                    </button>
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#16a34a' }}>
-                  Перейти до партії ↑
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
