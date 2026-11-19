@@ -190,6 +190,7 @@ export default function ManufacturerLedger(props) {
     onClearAllAdvances = null,
     manualRemaining = null,
     setManualRemaining = () => {},
+    carriedAdvanceFromPrev = 0,
     carriedDebtFromPrev = 0,
     exchangeRate = 45.0,
     shoesCatalog = []
@@ -284,7 +285,12 @@ export default function ManufacturerLedger(props) {
     return getPaidMonthFromRow(r, fallbackM, resolvedYear) === activeMonth;
   });
 
-  const monthDeposits = depositsList;
+  // Сортуємо всі аванси за датою, щоб вони були видні наскрізно у будь-якому місяці
+  const sortedGlobalDeposits = [...depositsList].sort((a, b) => {
+    const isoA = toISODate(a.isoDate || a.date, activeMonth);
+    const isoB = toISODate(b.isoDate || b.date, activeMonth);
+    return isoA.localeCompare(isoB);
+  });
 
   const handleAddRow = () => {
     const nextSeq = getNextSequentialDate(currentMonthOwnRows, activeMonth, resolvedYear);
@@ -547,11 +553,17 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  const totalAvailableAdvanceUAH = monthDeposits.reduce(
-    (sum, d) => sum + (Number(d.amount) || 0),
-    0
-  );
+  // Аванси, внесені саме в поточному відкритому місяці
+  const currentMonthDepositsUAH = sortedGlobalDeposits.reduce((sum, dep) => {
+    const depMonth = toISODate(dep.isoDate || dep.date, activeMonth).slice(0, 7);
+    return depMonth === activeMonth ? sum + (Number(dep.amount) || 0) : sum;
+  }, 0);
+
+  // Доступно авансів на поточний місяць = Перенесено з минулих місяців + Внесено в цьому місяці
+  const carriedFromPrevUAH = Number(carriedAdvanceFromPrev) || 0;
+  const totalAvailableAdvanceUAH = carriedFromPrevUAH + currentMonthDepositsUAH;
   const autoRemainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
+
   const hasManualRemaining =
     manualRemaining !== null && manualRemaining !== undefined && !Number.isNaN(Number(manualRemaining));
   const displayedRemainingUAH = hasManualRemaining
@@ -933,7 +945,7 @@ export default function ManufacturerLedger(props) {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a' }}>
-                    💰 Аванси ({activeMonth}):
+                    💰 Аванси (наскрізний гаманець):
                   </span>
 
                   <button
@@ -953,6 +965,29 @@ export default function ManufacturerLedger(props) {
                     Очистити всі аванси
                   </button>
                 </div>
+
+                {carriedFromPrevUAH !== 0 && (
+                  <div
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: '800',
+                      color: carriedFromPrevUAH > 0 ? '#15803d' : '#dc2626',
+                      background: carriedFromPrevUAH > 0 ? '#dcfce7' : '#fee2e2',
+                      padding: '0.25rem 0.45rem',
+                      borderRadius: '0.35rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <span>Перенесено з минулих місяців:</span>
+                    <span>
+                      {carriedFromPrevUAH > 0
+                        ? `+${carriedFromPrevUAH.toFixed(0)} грн`
+                        : `${carriedFromPrevUAH.toFixed(0)} грн`}
+                    </span>
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <input
@@ -1011,19 +1046,23 @@ export default function ManufacturerLedger(props) {
                   </button>
                 </div>
 
-                {monthDeposits.length > 0 && (
+                {sortedGlobalDeposits.length > 0 && (
                   <div
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '0.25rem',
-                      maxHeight: '115px',
+                      maxHeight: '125px',
                       overflowY: 'auto',
                       marginTop: '0.15rem'
                     }}
                   >
-                    {monthDeposits.map((dep) => {
+                    {sortedGlobalDeposits.map((dep) => {
+                      const depISO = toISODate(dep.isoDate || dep.date, activeMonth);
+                      const depMonthKey = depISO.slice(0, 7);
+                      const isCurrentMonthDep = depMonthKey === activeMonth;
                       const isEditingThis = editingDepositId === dep.id;
+
                       if (isEditingThis) {
                         return (
                           <div
@@ -1111,13 +1150,19 @@ export default function ManufacturerLedger(props) {
                             justifyContent: 'space-between',
                             alignItems: 'center',
                             fontSize: '0.75rem',
-                            background: '#f0fdf4',
+                            background: isCurrentMonthDep ? '#f0fdf4' : '#f8fafc',
+                            border: isCurrentMonthDep ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
                             padding: '0.22rem 0.4rem',
                             borderRadius: '0.3rem'
                           }}
                         >
                           <span>
-                            {dep.date || formatDayMonth(dep.isoDate)}: <strong>{dep.amount} грн</strong>
+                            {dep.date || formatDayMonth(depISO)}: <strong>{dep.amount} грн</strong>
+                            {!isCurrentMonthDep && (
+                              <span style={{ fontSize: '0.65rem', color: '#64748b', marginLeft: '0.3rem' }}>
+                                ({depMonthKey})
+                              </span>
+                            )}
                           </span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                             <button
@@ -1166,7 +1211,9 @@ export default function ManufacturerLedger(props) {
                     paddingTop: '0.25rem'
                   }}
                 >
-                  Доступно авансів: {totalAvailableAdvanceUAH.toFixed(0)} грн
+                  Доступно в {activeMonth}: {totalAvailableAdvanceUAH.toFixed(0)} грн
+                  {carriedFromPrevUAH !== 0 &&
+                    ` (${carriedFromPrevUAH.toFixed(0)} перен. + ${currentMonthDepositsUAH.toFixed(0)} нов.)`}
                 </div>
               </div>
             )}
