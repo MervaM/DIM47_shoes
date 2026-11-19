@@ -27,6 +27,78 @@ const UKRAINIAN_MONTH_MAP = {
   'грудня': '12'
 };
 
+const DAYS_LIST = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
+const MONTHS_LIST = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
+
+function DayMonthPicker({ isoValue, fallbackMonthKey, onChangeISO, color = '#111827' }) {
+  const safeISO = toISODate(isoValue, fallbackMonthKey);
+  const [y, m, d] = safeISO.split('-');
+
+  const handleDayChange = (newDay) => {
+    onChangeISO(`${y}-${m}-${newDay}`);
+  };
+
+  const handleMonthChange = (newMonth) => {
+    onChangeISO(`${y}-${newMonth}-${d}`);
+  };
+
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        background: '#ffffff',
+        border: '1px solid #cbd5e1',
+        borderRadius: '0.35rem',
+        padding: '0.15rem 0.25rem',
+        gap: '1px'
+      }}
+    >
+      <select
+        value={d}
+        onChange={(e) => handleDayChange(e.target.value)}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          fontSize: '0.78rem',
+          fontWeight: '800',
+          color,
+          cursor: 'pointer',
+          padding: '0.1rem 0',
+          outline: 'none'
+        }}
+      >
+        {DAYS_LIST.map((day) => (
+          <option key={day} value={day}>
+            {day}
+          </option>
+        ))}
+      </select>
+      <span style={{ fontWeight: '800', fontSize: '0.78rem', color: '#64748b' }}>.</span>
+      <select
+        value={m}
+        onChange={(e) => handleMonthChange(e.target.value)}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          fontSize: '0.78rem',
+          fontWeight: '800',
+          color,
+          cursor: 'pointer',
+          padding: '0.1rem 0',
+          outline: 'none'
+        }}
+      >
+        {MONTHS_LIST.map((mon) => (
+          <option key={mon} value={mon}>
+            {mon}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (rawMonth === undefined || rawMonth === null || rawMonth === '') {
     return `${fallbackYear}-08`;
@@ -285,7 +357,6 @@ export default function ManufacturerLedger(props) {
     return getPaidMonthFromRow(r, fallbackM, resolvedYear) === activeMonth;
   });
 
-  // Сортуємо всі аванси за датою, щоб вони були видні наскрізно у будь-якому місяці
   const sortedGlobalDeposits = [...depositsList].sort((a, b) => {
     const isoA = toISODate(a.isoDate || a.date, activeMonth);
     const isoB = toISODate(b.isoDate || b.date, activeMonth);
@@ -553,13 +624,11 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  // Аванси, внесені саме в поточному відкритому місяці
   const currentMonthDepositsUAH = sortedGlobalDeposits.reduce((sum, dep) => {
     const depMonth = toISODate(dep.isoDate || dep.date, activeMonth).slice(0, 7);
     return depMonth === activeMonth ? sum + (Number(dep.amount) || 0) : sum;
   }, 0);
 
-  // Доступно авансів на поточний місяць = Перенесено з минулих місяців + Внесено в цьому місяці
   const carriedFromPrevUAH = Number(carriedAdvanceFromPrev) || 0;
   const totalAvailableAdvanceUAH = carriedFromPrevUAH + currentMonthDepositsUAH;
   const autoRemainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
@@ -990,19 +1059,10 @@ export default function ManufacturerLedger(props) {
                 )}
 
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input
-                    type="date"
-                    value={newDepositISO}
-                    onChange={(e) => setNewDepositISO(e.target.value)}
-                    style={{
-                      padding: '0.25rem 0.35rem',
-                      fontSize: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.35rem',
-                      fontWeight: '700',
-                      background: '#fff',
-                      color: '#111827'
-                    }}
+                  <DayMonthPicker
+                    isoValue={newDepositISO}
+                    fallbackMonthKey={activeMonth}
+                    onChangeISO={setNewDepositISO}
                   />
 
                   <input
@@ -1078,17 +1138,10 @@ export default function ManufacturerLedger(props) {
                               flexWrap: 'wrap'
                             }}
                           >
-                            <input
-                              type="date"
-                              value={editingDepositISO}
-                              onChange={(e) => setEditingDepositISO(e.target.value)}
-                              style={{
-                                padding: '0.15rem 0.25rem',
-                                fontSize: '0.72rem',
-                                borderRadius: '0.25rem',
-                                border: '1px solid #cbd5e1',
-                                background: '#fff'
-                              }}
+                            <DayMonthPicker
+                              isoValue={editingDepositISO}
+                              fallbackMonthKey={activeMonth}
+                              onChangeISO={setEditingDepositISO}
                             />
                             <input
                               type="number"
@@ -1157,10 +1210,10 @@ export default function ManufacturerLedger(props) {
                           }}
                         >
                           <span>
-                            {dep.date || formatDayMonth(depISO)}: <strong>{dep.amount} грн</strong>
+                            {formatDayMonth(depISO)}: <strong>{dep.amount} грн</strong>
                             {!isCurrentMonthDep && (
                               <span style={{ fontSize: '0.65rem', color: '#64748b', marginLeft: '0.3rem' }}>
-                                ({depMonthKey})
+                                ({depMonthKey.slice(5, 7)})
                               </span>
                             )}
                           </span>
@@ -1211,7 +1264,7 @@ export default function ManufacturerLedger(props) {
                     paddingTop: '0.25rem'
                   }}
                 >
-                  Доступно в {activeMonth}: {totalAvailableAdvanceUAH.toFixed(0)} грн
+                  Доступно в {activeMonth.slice(5, 7)} міс.: {totalAvailableAdvanceUAH.toFixed(0)} грн
                   {carriedFromPrevUAH !== 0 &&
                     ` (${carriedFromPrevUAH.toFixed(0)} перен. + ${currentMonthDepositsUAH.toFixed(0)} нов.)`}
                 </div>
@@ -1230,7 +1283,7 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#16a34a' }}>
-                Оплачено за датою оплати ({activeMonth}):
+                Оплачено за датою оплати ({activeMonth.slice(5, 7)} міс.):
               </span>
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
                 {paidTotalUAH.toFixed(0)} грн
@@ -1432,7 +1485,7 @@ export default function ManufacturerLedger(props) {
               >
                 <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '40px' }}>✓</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.4rem', width: '132px' }}>Дата зам.</th>
+                <th style={{ padding: '0.6rem 0.4rem', width: '98px' }}>Дата зам.</th>
                 <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>Ціна $</th>
@@ -1666,7 +1719,7 @@ export default function ManufacturerLedger(props) {
                   : 'Модель не вибрана';
                 const rowISO = toISODate(row.isoDate || row.date, rowOrderMonth);
                 const displayDate = formatDayMonth(rowISO);
-                const displayPaidDate = row.paidDate || row.paidAt || '';
+                const displayPaidDate = formatDayMonth(row.paidIsoDate || row.paidDate || row.paidAt || '');
 
                 return (
                   <tr
@@ -1728,19 +1781,10 @@ export default function ManufacturerLedger(props) {
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <input
-                            type="date"
-                            value={rowISO}
-                            onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
-                            style={{
-                              padding: '0.22rem 0.3rem',
-                              border: '1px solid #cbd5e1',
-                              borderRadius: '0.35rem',
-                              fontSize: '0.75rem',
-                              fontWeight: '700',
-                              background: '#fff',
-                              color: '#0f172a'
-                            }}
+                          <DayMonthPicker
+                            isoValue={rowISO}
+                            fallbackMonthKey={rowOrderMonth}
+                            onChangeISO={(nextISO) => handleRowChange(row.id, 'isoDate', nextISO)}
                           />
 
                           {isFromOtherMonth && (
@@ -2113,26 +2157,17 @@ export default function ManufacturerLedger(props) {
                 fontWeight: '700',
                 color: '#334155',
                 background: '#f8fafc',
-                padding: '0.3rem 0.55rem',
+                padding: '0.25rem 0.5rem',
                 borderRadius: '0.45rem',
                 border: '1px solid #cbd5e1'
               }}
             >
               <span>Дата опл.:</span>
-              <input
-                type="date"
-                value={paymentISO}
-                onChange={(e) => setPaymentISO(e.target.value)}
-                style={{
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.3rem',
-                  padding: '0.15rem 0.3rem',
-                  fontSize: '0.78rem',
-                  fontWeight: '800',
-                  background: '#ffffff',
-                  color: '#4f46e5',
-                  cursor: 'pointer'
-                }}
+              <DayMonthPicker
+                isoValue={paymentISO}
+                fallbackMonthKey={activeMonth}
+                onChangeISO={setPaymentISO}
+                color="#4f46e5"
               />
             </div>
 
