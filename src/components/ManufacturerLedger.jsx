@@ -196,9 +196,7 @@ export default function ManufacturerLedger(props) {
   const [newDepositAmount, setNewDepositAmount] = useState('');
   const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
 
-  // Активація оплати через клік на помаранчеву суму в підсумку проміжку
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
-  // Вибір способу оплати: 'advance' (з авансу) або 'separate' (окрема оплата)
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
 
   const rowRefs = useRef({});
@@ -213,6 +211,47 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
+  // Рядки та аванси з ПОПЕРЕДНІХ місяців (< activeMonth) для переносу авансу та боргу
+  const prevRows = rows.filter((r) => {
+    if (r.type !== 'item' || r.isEditing) return false;
+    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
+    return rowMonth < activeMonth;
+  });
+
+  const prevDeposits = depositsList.filter((d) => {
+    const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
+    return depMonth < activeMonth;
+  });
+
+  let prevDepositsSum = 0;
+  prevDeposits.forEach((d) => {
+    prevDepositsSum += Number(d.amount) || 0;
+  });
+
+  let prevPaidFromAdvanceUAH = 0;
+  let prevUnpaidDebtUAH = 0;
+
+  prevRows.forEach((row) => {
+    const qty = Number(row.quantity) || 0;
+    const costUSD = Number(row.customCostUSD) || 0;
+    const patternUAH = Number(row.patternCostUAH) || 0;
+    const rRate = Number(row.rowRate) || 0;
+    const rowFullUAH = qty * costUSD * rRate + patternUAH;
+
+    if (row.isPaid) {
+      if (row.paySource !== 'separate') {
+        prevPaidFromAdvanceUAH += rowFullUAH;
+      }
+    } else {
+      prevUnpaidDebtUAH += rowFullUAH;
+    }
+  });
+
+  // Перенесений з минулих місяців залишок авансу та борг
+  const carriedAdvanceBalance = prevDepositsSum - prevPaidFromAdvanceUAH;
+  const carriedDebtUAH = prevUnpaidDebtUAH;
+
+  // Рядки поточного місяця
   const monthRows = rows.filter((r) => {
     if (r.isEditing) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
@@ -359,7 +398,7 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Підрахунки:
+  // Підрахунки поточного місяця:
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -414,8 +453,15 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  const remainingAdvanceUAH = totalDepositsSum - paidFromAdvanceUAH;
+  const monthDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+  // Загальний доступний аванс з урахуванням переносу з минулих місяців
+  const totalAvailableAdvanceUAH = carriedAdvanceBalance + monthDepositsSum;
+  // Поточний залишок авансу після списань у поточному місяці
+  const remainingAdvanceUAH = totalAvailableAdvanceUAH - paidFromAdvanceUAH;
+
+  // Загальний борг (поточні неоплачені + перенесений борг з минулих місяців)
+  const totalDebtWithCarryUAH = unpaidUAH + carriedDebtUAH;
 
   const hasCheckedPairs = checkedPairs > 0;
   const isPaymentActivated = hasCheckedPairs && activatedSubtotalId !== null;
@@ -435,7 +481,6 @@ export default function ManufacturerLedger(props) {
     setActivatedSubtotalId((prev) => (prev === subtotalId ? null : subtotalId));
   };
 
-  // При натисканні "Оплатити": обрані пари І сам рядок "Підсумок проміжку" фіксуються як оплачені з точною оплаченою сумою
   const handleConfirmPayment = (sourceOverride) => {
     if (!isPaymentActivated) return;
 
@@ -490,7 +535,6 @@ export default function ManufacturerLedger(props) {
     setActivatedSubtotalId(null);
   };
 
-  // Автовизначення суми для вже існуючих проміжків на скріні (якщо над проміжком усі пари оплачені)
   const precomputedSubtotalPaidMap = {};
   let sectionPaidSum = 0;
   let sectionPaidUSD = 0;
@@ -524,7 +568,6 @@ export default function ManufacturerLedger(props) {
           source: r.paySource || sectionPaySource
         };
       } else if (sectionPaidCount > 0 && sectionUnpaidCount === 0) {
-        // Якщо над цим підсумком усі пари вже оплачені і немає неоплачених — підхоплюємо їхню суму замість 0 грн
         precomputedSubtotalPaidMap[r.id] = {
           isClosed: true,
           amountUAH: sectionPaidSum,
@@ -767,6 +810,21 @@ export default function ManufacturerLedger(props) {
                   💰 Аванси ({activeMonth}):
                 </span>
 
+                {carriedAdvanceBalance !== 0 && (
+                  <div
+                    style={{
+                      fontSize: '0.72rem',
+                      background: carriedAdvanceBalance > 0 ? '#f0fdf4' : '#fef2f2',
+                      color: carriedAdvanceBalance > 0 ? '#15803d' : '#b91c1c',
+                      padding: '0.25rem 0.45rem',
+                      borderRadius: '0.35rem',
+                      fontWeight: '700'
+                    }}
+                  >
+                    Перенесено з минулих місяців: <strong>{carriedAdvanceBalance.toFixed(0)} грн</strong>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                   <input
                     type="text"
@@ -882,7 +940,7 @@ export default function ManufacturerLedger(props) {
                     paddingTop: '0.25rem'
                   }}
                 >
-                  Разом авансів: {totalDepositsSum} грн
+                  Доступно авансів: {totalAvailableAdvanceUAH.toFixed(0)} грн
                 </div>
               </div>
             )}
@@ -899,7 +957,7 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#16a34a' }}>
-                Оплачено:
+                Оплачено ({activeMonth}):
               </span>
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
                 {paidTotalUAH.toFixed(0)} грн
@@ -918,31 +976,39 @@ export default function ManufacturerLedger(props) {
                 border: '1px solid #ede9fe',
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                gap: '0.2rem'
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
-                {totalDepositsSum > 0 ? 'Залишок авансу:' : 'Неоплачено:'}
+                {totalAvailableAdvanceUAH > 0 ? 'Залишок авансу:' : 'Борг / Неоплачено:'}
               </span>
               <span
                 style={{
                   fontSize: '1.1rem',
                   fontWeight: '900',
                   color:
-                    totalDepositsSum > 0
+                    totalAvailableAdvanceUAH > 0
                       ? remainingAdvanceUAH < 0
                         ? '#dc2626'
                         : '#312e81'
+                      : totalDebtWithCarryUAH > 0
+                      ? '#dc2626'
                       : '#312e81'
                 }}
               >
-                {totalDepositsSum > 0
+                {totalAvailableAdvanceUAH > 0
                   ? `${remainingAdvanceUAH.toFixed(0)} грн`
-                  : `${unpaidUAH.toFixed(0)} грн`}
+                  : `${totalDebtWithCarryUAH.toFixed(0)} грн`}
               </span>
-              {totalDepositsSum > 0 && (
+              {totalAvailableAdvanceUAH > 0 && (
                 <span style={{ fontSize: '0.68rem', color: '#6366f1', fontWeight: '700' }}>
-                  {totalDepositsSum} грн − {paidFromAdvanceUAH.toFixed(0)} грн (оплачено з авансу)
+                  {totalAvailableAdvanceUAH.toFixed(0)} грн − {paidFromAdvanceUAH.toFixed(0)} грн (з авансу)
+                </span>
+              )}
+              {carriedDebtUAH > 0 && (
+                <span style={{ fontSize: '0.68rem', color: '#dc2626', fontWeight: '800' }}>
+                  Перенесений борг з минулих місяців: {carriedDebtUAH.toFixed(0)} грн
                 </span>
               )}
             </div>
@@ -1007,7 +1073,6 @@ export default function ManufacturerLedger(props) {
                   const closedInfo = precomputedSubtotalPaidMap[row.id];
                   const isClosedSubtotal = Boolean(closedInfo?.isClosed);
 
-                  // Якщо проміжок вже оплачений — він горить зеленим і показує оплачену суму!
                   if (isClosedSubtotal) {
                     return (
                       <tr
@@ -1179,7 +1244,6 @@ export default function ManufacturerLedger(props) {
                         </div>
                       </td>
 
-                      {/* Помаранчева сума в проміжку: клік на неї активує оплату */}
                       <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right' }}>
                         <button
                           type="button"
@@ -1266,7 +1330,6 @@ export default function ManufacturerLedger(props) {
                       transition: 'background 0.2s'
                     }}
                   >
-                    {/* Галочка */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'center' }}>
                       {isPaid ? (
                         <span
@@ -1293,7 +1356,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* № */}
                     <td
                       style={{
                         padding: '0.5rem 0.35rem',
@@ -1305,7 +1367,6 @@ export default function ManufacturerLedger(props) {
                       {currentPairNumber}
                     </td>
 
-                    {/* Дата */}
                     <td style={{ padding: '0.5rem 0.35rem' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
@@ -1330,7 +1391,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Фото + Вибір моделі + зелена плашка Оплачено з перемикачем способу */}
                     <td style={{ padding: '0.5rem 0.5rem' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
@@ -1441,7 +1501,6 @@ export default function ManufacturerLedger(props) {
                       </div>
                     </td>
 
-                    {/* К-ть */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'center' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '700' }}>{qty}</span>
@@ -1467,7 +1526,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Ціна $ */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>${rowUSD.toFixed(0)}</span>
@@ -1494,7 +1552,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Курс */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{rRate}</span>
@@ -1520,7 +1577,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Лекало грн */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{patternUAH || 0}</span>
@@ -1547,7 +1603,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Разом грн */}
                     <td
                       style={{
                         padding: '0.5rem 0.5rem',
@@ -1564,7 +1619,6 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Видалити */}
                     <td style={{ padding: '0.5rem 0.25rem', textAlign: 'center' }}>
                       <button
                         type="button"
@@ -1689,7 +1743,6 @@ export default function ManufacturerLedger(props) {
               Неоплачено: {unpaidUAH.toFixed(0)} грн
             </div>
 
-            {/* Перемикач способу оплати (з авансу / окрема оплата) */}
             <div
               style={{
                 display: 'inline-flex',
@@ -1736,7 +1789,6 @@ export default function ManufacturerLedger(props) {
               </button>
             </div>
 
-            {/* Кнопка оплати: сіра, поки не тицьнеш на помаранчеву суму в підсумку проміжку */}
             <button
               type="button"
               onClick={() => handleConfirmPayment()}
