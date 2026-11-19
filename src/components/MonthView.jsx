@@ -9,13 +9,6 @@ const MONTHS_UKR = [
   'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'
 ];
 
-function getDepositsForMonth(monthData) {
-  if (Array.isArray(monthData?.milaDepositsList)) {
-    return monthData.milaDepositsList;
-  }
-  return [];
-}
-
 function getRowOrderMonth(row, fallbackMonthKey) {
   const fallbackYear = fallbackMonthKey.split('-')[0] || '2026';
   if (row?.isoDate && typeof row.isoDate === 'string' && row.isoDate.includes('-')) {
@@ -57,6 +50,54 @@ function getRowPaidMonth(row, fallbackMonthKey) {
   return getRowOrderMonth(row, fallbackMonthKey);
 }
 
+function extractGlobalDeposits(rootData) {
+  if (Array.isArray(rootData?.globalMilaDeposits)) {
+    return rootData.globalMilaDeposits;
+  }
+  const seen = new Set();
+  const collected = [];
+  const monthsObj = rootData?.months || {};
+
+  Object.keys(monthsObj)
+    .sort()
+    .forEach((mKey) => {
+      const list = monthsObj[mKey]?.milaDepositsList;
+      if (Array.isArray(list)) {
+        list.forEach((dep) => {
+          if (!dep || seen.has(dep.id)) return;
+          seen.add(dep.id);
+          const iso =
+            dep.isoDate && /^\d{4}-\d{2}-\d{2}/.test(dep.isoDate)
+              ? dep.isoDate.slice(0, 10)
+              : `${mKey}-01`;
+          collected.push({
+            ...dep,
+            isoDate: iso,
+            month: iso.slice(0, 7)
+          });
+        });
+      }
+    });
+
+  return collected;
+}
+
+function collectAllMilaRows(allMonthsMap) {
+  const seenIds = new Set();
+  const all = [];
+  Object.keys(allMonthsMap || {})
+    .sort()
+    .forEach((k) => {
+      const list = Array.isArray(allMonthsMap[k]?.milaRows) ? allMonthsMap[k].milaRows : [];
+      list.forEach((r) => {
+        if (!r || seenIds.has(r.id)) return;
+        seenIds.add(r.id);
+        all.push({ ...r, _storageMonthKey: k });
+      });
+    });
+  return all;
+}
+
 function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   const seenIds = new Set();
   const result = [];
@@ -77,7 +118,6 @@ function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
 }
 
 function buildMonthPayload({
-  milaDepositsList,
   milaManualRemaining,
   milaInitialDebt,
   milaRate,
@@ -86,14 +126,7 @@ function buildMonthPayload({
   valeraRows,
   expenses
 }) {
-  const depositsTotal = (milaDepositsList || []).reduce(
-    (sum, d) => sum + (Number(d.amount) || 0),
-    0
-  );
-
   return {
-    milaDepositsList: milaDepositsList || [],
-    milaDeposit: depositsTotal,
     milaManualRemaining:
       milaManualRemaining !== null && milaManualRemaining !== undefined && milaManualRemaining !== ''
         ? Number(milaManualRemaining)
@@ -117,8 +150,8 @@ export default function MonthView() {
   const [syncStatus, setSyncStatus] = useState('saved');
 
   const [allMonthsMap, setAllMonthsMap] = useState({});
+  const [globalMilaDeposits, setGlobalMilaDeposits] = useState([]);
 
-  const [milaDepositsList, setMilaDepositsList] = useState([]);
   const [milaManualRemaining, setMilaManualRemaining] = useState(null);
   const [milaInitialDebt, setMilaInitialDebt] = useState(0);
   const [milaRate, setMilaRate] = useState(45.0);
@@ -133,18 +166,21 @@ export default function MonthView() {
   const isDirtyRef = useRef(false);
   const isReadyToSaveRef = useRef(false);
   const catalogDirtyRef = useRef(false);
+  const depositsDirtyRef = useRef(false);
   const saveTimerRef = useRef(null);
   const writeQueueRef = useRef(Promise.resolve());
 
   const currentMonthKeyRef = useRef('');
   const latestPayloadRef = useRef(null);
   const latestCatalogRef = useRef([]);
+  const latestDepositsRef = useRef([]);
 
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
   currentMonthKeyRef.current = monthKey;
   latestCatalogRef.current = shoesCatalog;
+  latestDepositsRef.current = globalMilaDeposits;
 
-  const enqueueSave = useCallback((targetKey, monthObj, overrideCatalog) => {
+  const enqueueSave = useCallback((targetKey, monthObj, overrideCatalog, overrideDeposits) => {
     if (!targetKey || !monthObj) return Promise.resolve();
 
     setSyncStatus('saving');
@@ -175,6 +211,13 @@ export default function MonthView() {
           ? latestCatalogRef.current
           : currentRoot.shoesCatalog ?? latestCatalogRef.current;
 
+      const nextDeposits =
+        overrideDeposits !== undefined
+          ? overrideDeposits
+          : depositsDirtyRef.current
+          ? latestDepositsRef.current
+          : currentRoot.globalMilaDeposits ?? latestDepositsRef.current;
+
       const { error: writeError } = await supabase
         .from('app_state')
         .upsert({
@@ -182,6 +225,7 @@ export default function MonthView() {
           data: {
             ...currentRoot,
             shoesCatalog: nextCatalog,
+            globalMilaDeposits: nextDeposits,
             months: nextMonths
           }
         });
@@ -191,6 +235,7 @@ export default function MonthView() {
         setSyncStatus('error');
       } else {
         catalogDirtyRef.current = false;
+        depositsDirtyRef.current = false;
         setAllMonthsMap(nextMonths);
         setSyncStatus('saved');
       }
@@ -211,14 +256,37 @@ export default function MonthView() {
     }
   }, [enqueueSave]);
 
+  const handleSetGlobalMilaDeposits = (updater) => {
+    depositsDirtyRef.current = true;
+    setGlobalMilaDeposits((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      latestDepositsRef.current = next;
+      const payloadToKeep =
+        latestPayloadRef.current ||
+        buildMonthPayload({
+          milaManualRemaining,
+          milaInitialDebt,
+          milaRate,
+          milaRows,
+          valeraRate,
+          valeraRows,
+          expenses
+        });
+      enqueueSave(monthKey, payloadToKeep, undefined, next);
+      return next;
+    });
+  };
+
   const handleClearAllAdvancesEverywhere = async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
     isDirtyRef.current = false;
+    depositsDirtyRef.current = false;
 
-    setMilaDepositsList([]);
+    setGlobalMilaDeposits([]);
+    latestDepositsRef.current = [];
     setMilaManualRemaining(null);
     setMilaInitialDebt(0);
     setSyncStatus('saving');
@@ -252,7 +320,6 @@ export default function MonthView() {
       });
 
       cleanedMonths[monthKey] = buildMonthPayload({
-        milaDepositsList: [],
         milaManualRemaining: null,
         milaInitialDebt: 0,
         milaRate,
@@ -268,6 +335,7 @@ export default function MonthView() {
           id: 1,
           data: {
             ...currentRoot,
+            globalMilaDeposits: [],
             milaDepositsList: [],
             milaDeposit: 0,
             milaManualRemaining: null,
@@ -319,7 +387,7 @@ export default function MonthView() {
       const allMonthsData = rootData.months || {};
       const monthData = allMonthsData[monthKey] || {};
 
-      const loadedDeposits = getDepositsForMonth(monthData);
+      const loadedGlobalDeposits = extractGlobalDeposits(rootData);
       const loadedManualRemaining =
         monthData.milaManualRemaining !== null &&
         monthData.milaManualRemaining !== undefined &&
@@ -335,7 +403,7 @@ export default function MonthView() {
       const loadedCatalog = Array.isArray(rootData.shoesCatalog) ? rootData.shoesCatalog : [];
 
       setAllMonthsMap(allMonthsData);
-      setMilaDepositsList(loadedDeposits);
+      setGlobalMilaDeposits(loadedGlobalDeposits);
       setMilaManualRemaining(loadedManualRemaining);
       setMilaInitialDebt(loadedInitDebt);
       setMilaRate(loadedMilaRate);
@@ -346,7 +414,6 @@ export default function MonthView() {
       setShoesCatalog(loadedCatalog);
 
       latestPayloadRef.current = buildMonthPayload({
-        milaDepositsList: loadedDeposits,
         milaManualRemaining: loadedManualRemaining,
         milaInitialDebt: loadedInitDebt,
         milaRate: loadedMilaRate,
@@ -378,7 +445,6 @@ export default function MonthView() {
     if (isLoading || !isReadyToSaveRef.current) return;
 
     const payload = buildMonthPayload({
-      milaDepositsList,
       milaManualRemaining,
       milaInitialDebt,
       milaRate,
@@ -415,7 +481,6 @@ export default function MonthView() {
       }
     };
   }, [
-    milaDepositsList,
     milaManualRemaining,
     milaInitialDebt,
     milaRate,
@@ -464,7 +529,6 @@ export default function MonthView() {
       const payloadToKeep =
         latestPayloadRef.current ||
         buildMonthPayload({
-          milaDepositsList,
           milaManualRemaining,
           milaInitialDebt,
           milaRate,
@@ -503,6 +567,34 @@ export default function MonthView() {
 
   const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
   const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
+
+  const allMilaItemsAcrossMonths = collectAllMilaRows({
+    ...allMonthsMap,
+    [monthKey]: { ...(allMonthsMap[monthKey] || {}), milaRows }
+  }).filter((r) => r.type === 'item');
+
+  const depositsBeforeCurrentMonth = globalMilaDeposits.reduce((sum, dep) => {
+    const depMonth =
+      dep.isoDate && /^\d{4}-\d{2}/.test(dep.isoDate)
+        ? dep.isoDate.slice(0, 7)
+        : dep.month || monthKey;
+    return depMonth < monthKey ? sum + (Number(dep.amount) || 0) : sum;
+  }, 0);
+
+  const advanceSpentBeforeCurrentMonth = allMilaItemsAcrossMonths.reduce((sum, r) => {
+    if (!r.isPaid || r.paySource === 'separate') return sum;
+    const paidM = getRowPaidMonth(r, r._storageMonthKey || monthKey);
+    if (paidM < monthKey) {
+      const qty = Number(r.quantity) || 0;
+      const costUSD = Number(r.customCostUSD) || 0;
+      const patternUAH = Number(r.patternCostUAH) || 0;
+      const rRate = Number(r.rowRate) || 0;
+      return sum + qty * costUSD * rRate + patternUAH;
+    }
+    return sum;
+  }, 0);
+
+  const carriedAdvanceFromPrev = depositsBeforeCurrentMonth - advanceSpentBeforeCurrentMonth;
 
   const milaOrderedThisMonth = milaRows.filter(
     (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
@@ -566,7 +658,7 @@ export default function MonthView() {
                   onChange={(e) => handleSelectYear(Number(e.target.value))}
                   style={{ padding: '0.4rem 0.75rem', borderRadius: '0.5rem', border: '2px solid #4f46e5', fontWeight: 'bold', fontSize: '1rem', color: '#4f46e5', background: '#f5f3ff' }}
                 >
-                  {[2025, 2026, 2027, 2028].map(y => (
+                  {[2025, 2026, 2027, 2028].map((y) => (
                     <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
@@ -630,11 +722,12 @@ export default function MonthView() {
               onUpdateExternalRow={(storageMonthKey, rowId, patch) =>
                 handleUpdateExternalRow('milaRows', storageMonthKey, rowId, patch)
               }
-              depositsList={milaDepositsList}
-              setDepositsList={setMilaDepositsList}
+              depositsList={globalMilaDeposits}
+              setDepositsList={handleSetGlobalMilaDeposits}
               onClearAllAdvances={handleClearAllAdvancesEverywhere}
               manualRemaining={milaManualRemaining}
               setManualRemaining={setMilaManualRemaining}
+              carriedAdvanceFromPrev={carriedAdvanceFromPrev}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
