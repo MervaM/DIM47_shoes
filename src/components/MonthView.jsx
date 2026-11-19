@@ -27,78 +27,15 @@ function getDepositsForMonth(monthData, monthKey, monthIndex) {
   return [];
 }
 
-function calculateCarryOverForManufacturer(allMonthsMap, currentMonthKey, manufacturer) {
-  let depositsSum = 0;
-  let paidFromAdvanceUAH = 0;
-  let unpaidDebtUAH = 0;
-
-  const sortedKeys = Object.keys(allMonthsMap || {}).sort();
-
-  sortedKeys.forEach((key) => {
-    if (key >= currentMonthKey) return;
-    const mData = allMonthsMap[key] || {};
-    const parts = key.split('-');
-    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
-
-    if (manufacturer === 'Міла') {
-      const mDeposits = getDepositsForMonth(mData, key, mIdx);
-      mDeposits.forEach((d) => {
-        depositsSum += Number(d.amount) || 0;
-      });
-
-      const rows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
-      rows.forEach((row) => {
-        if (row.type !== 'item' || row.isEditing) return;
-        const qty = Number(row.quantity) || 0;
-        const costUSD = Number(row.customCostUSD) || 0;
-        const patternUAH = Number(row.patternCostUAH) || 0;
-        const rate = Number(row.rowRate) || Number(mData.milaRate) || 45;
-        const rowFullUAH = qty * costUSD * rate + patternUAH;
-
-        if (row.isPaid) {
-          if (row.paySource !== 'separate') {
-            paidFromAdvanceUAH += rowFullUAH;
-          }
-        } else {
-          unpaidDebtUAH += rowFullUAH;
-        }
-      });
-    } else if (manufacturer === 'Валерій') {
-      const rows = Array.isArray(mData.valeraRows) ? mData.valeraRows : [];
-      rows.forEach((row) => {
-        if (row.type !== 'item' || row.isEditing) return;
-        const qty = Number(row.quantity) || 0;
-        const costUSD = Number(row.customCostUSD) || 0;
-        const patternUAH = Number(row.patternCostUAH) || 0;
-        const rate = Number(row.rowRate) || Number(mData.valeraRate) || 45;
-        const rowFullUAH = qty * costUSD * rate + patternUAH;
-
-        if (!row.isPaid) {
-          unpaidDebtUAH += rowFullUAH;
-        }
-      });
-    }
-  });
-
-  return {
-    carriedAdvance: depositsSum - paidFromAdvanceUAH,
-    carriedDebt: unpaidDebtUAH
-  };
-}
-
 export default function MonthView() {
   const now = new Date();
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth()); // 0-11
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
 
   const [activeTab, setActiveTab] = useState('summary');
   const [isLoading, setIsLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState('saved');
 
-  // Усі місяці з бази для розрахунку переносу залишків і боргів
-  const [allMonthsMap, setAllMonthsMap] = useState({});
-
-  // Дані для поточного обраного місяця
   const [milaDepositsList, setMilaDepositsList] = useState([]);
   const [milaInitialDebt, setMilaInitialDebt] = useState(0);
   const [milaRate, setMilaRate] = useState(45.0);
@@ -109,19 +46,14 @@ export default function MonthView() {
 
   const [expenses, setExpenses] = useState([]);
 
-  // Загальний каталог взуття (спільний для всіх місяців)
-  const [shoesCatalog, setShoesCatalog] = useState([
-    { id: 'b35', name: 'Б35 (шкіра/замша)', manufacturer: 'Міла', defaultCostUSD: 35, retailPriceUSD: 63, photo: '' },
-    { id: 'moli', name: 'Молі', manufacturer: 'Валерій', defaultCostUSD: 33, retailPriceUSD: 59.4, photo: '' },
-    { id: 'y14', name: 'Y14', manufacturer: 'Міла', defaultCostUSD: 45, retailPriceUSD: 81, photo: '' }
-  ]);
+  // Каталог підтягується тільки з бази
+  const [shoesCatalog, setShoesCatalog] = useState([]);
 
   const isRemoteUpdate = useRef(false);
+  const catalogDirty = useRef(false);
 
-  // Унікальний ключ для місяця в базі, напр. "2026-08"
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
 
-  // Завантаження даних при зміні місяця або старті
   useEffect(() => {
     async function loadDataForMonth() {
       setIsLoading(true);
@@ -142,7 +74,6 @@ export default function MonthView() {
         const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
 
         isRemoteUpdate.current = true;
-        setAllMonthsMap(allMonthsData);
         setMilaDepositsList(loadedDeposits);
         setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
         setMilaRate(monthData.milaRate ?? 45.0);
@@ -151,7 +82,7 @@ export default function MonthView() {
         setValeraRows(monthData.valeraRows ?? []);
         setExpenses(monthData.expenses ?? []);
 
-        if (data.data.shoesCatalog) {
+        if (Array.isArray(data.data.shoesCatalog)) {
           setShoesCatalog(data.data.shoesCatalog);
         }
 
@@ -163,7 +94,6 @@ export default function MonthView() {
     loadDataForMonth();
   }, [monthKey, selectedMonth]);
 
-  // Збереження даних у хмару при будь-якій зміні
   useEffect(() => {
     if (isLoading) return;
     if (isRemoteUpdate.current) {
@@ -184,11 +114,6 @@ export default function MonthView() {
       expenses
     };
 
-    setAllMonthsMap((prev) => ({
-      ...prev,
-      [monthKey]: updatedMonthObj
-    }));
-
     setSyncStatus('saving');
     const timer = setTimeout(async () => {
       const { data: existingData } = await supabase
@@ -198,15 +123,20 @@ export default function MonthView() {
         .maybeSingle();
 
       const currentRoot = existingData?.data || {};
-      const months = {
+      const nextMonths = {
         ...(currentRoot.months || {}),
         [monthKey]: updatedMonthObj
       };
 
+      // Каталог у базі оновлюється ТІЛЬКИ якщо ти сама його змінила у вкладці "Каталог взуття"
+      const nextCatalog = catalogDirty.current
+        ? shoesCatalog
+        : (currentRoot.shoesCatalog ?? shoesCatalog);
+
       const payloadToSave = {
         ...currentRoot,
-        shoesCatalog,
-        months
+        shoesCatalog: nextCatalog,
+        months: nextMonths
       };
 
       const { error } = await supabase
@@ -217,6 +147,7 @@ export default function MonthView() {
         console.error('Помилка збереження:', error);
         setSyncStatus('error');
       } else {
+        catalogDirty.current = false;
         setSyncStatus('saved');
       }
     }, 600);
@@ -224,8 +155,10 @@ export default function MonthView() {
     return () => clearTimeout(timer);
   }, [milaDepositsList, milaInitialDebt, milaRate, milaRows, valeraRate, valeraRows, expenses, shoesCatalog, monthKey, isLoading]);
 
-  const milaCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Міла');
-  const valeraCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Валерій');
+  const handleSetShoesCatalog = (updater) => {
+    catalogDirty.current = true;
+    setShoesCatalog(updater);
+  };
 
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
@@ -307,6 +240,7 @@ export default function MonthView() {
         <>
           {activeTab === 'summary' && (
             <SummaryView
+              monthKey={monthKey}
               milaRows={milaRows}
               valeraRows={valeraRows}
               milaRate={milaRate}
@@ -326,8 +260,6 @@ export default function MonthView() {
               setRows={setMilaRows}
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
-              carriedAdvanceFromPrev={milaCarry.carriedAdvance}
-              carriedDebtFromPrev={milaCarry.carriedDebt}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
@@ -344,8 +276,6 @@ export default function MonthView() {
               selectedYear={selectedYear}
               rows={valeraRows}
               setRows={setValeraRows}
-              carriedAdvanceFromPrev={valeraCarry.carriedAdvance}
-              carriedDebtFromPrev={valeraCarry.carriedDebt}
               exchangeRate={valeraRate}
               setExchangeRate={setValeraRate}
               shoesCatalog={shoesCatalog}
@@ -355,7 +285,7 @@ export default function MonthView() {
           {activeTab === 'catalog' && (
             <ShoesCardsView
               shoes={shoesCatalog}
-              setShoes={setShoesCatalog}
+              setShoes={handleSetShoesCatalog}
               exchangeRate={milaRate}
             />
           )}
