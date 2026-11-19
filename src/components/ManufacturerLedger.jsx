@@ -27,23 +27,6 @@ const UKRAINIAN_MONTH_MAP = {
   'грудня': '12'
 };
 
-const MONTH_OPTIONS_UKR = [
-  { mm: '01', label: '01 (Січ)' },
-  { mm: '02', label: '02 (Лют)' },
-  { mm: '03', label: '03 (Бер)' },
-  { mm: '04', label: '04 (Квіт)' },
-  { mm: '05', label: '05 (Трав)' },
-  { mm: '06', label: '06 (Черв)' },
-  { mm: '07', label: '07 (Лип)' },
-  { mm: '08', label: '08 (Серп)' },
-  { mm: '09', label: '09 (Вер)' },
-  { mm: '10', label: '10 (Жовт)' },
-  { mm: '11', label: '11 (Лист)' },
-  { mm: '12', label: '12 (Груд)' }
-];
-
-const DAYS_IN_MONTH_LIST = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
-
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (rawMonth === undefined || rawMonth === null || rawMonth === '') {
     return `${fallbackYear}-08`;
@@ -82,6 +65,33 @@ function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   return `${fallbackYear}-08`;
 }
 
+function toISODate(val, fallbackMonthKey = '2026-08') {
+  const [fbYear, fbMonth] = String(fallbackMonthKey || '2026-08').split('-');
+  const y = fbYear || '2026';
+  const m = fbMonth || '08';
+
+  if (!val || typeof val !== 'string') {
+    return `${y}-${m}-01`;
+  }
+
+  const trimmed = val.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+
+  const dmMatch = trimmed.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
+  if (dmMatch) {
+    const dd = String(Math.min(31, Math.max(1, Number(dmMatch[1]) || 1))).padStart(2, '0');
+    const mm = String(Math.min(12, Math.max(1, Number(dmMatch[2]) || 1))).padStart(2, '0');
+    let rawY = dmMatch[3] || y;
+    if (rawY.length === 2) rawY = `20${rawY}`;
+    return `${rawY}-${mm}-${dd}`;
+  }
+
+  return `${y}-${m}-01`;
+}
+
 function formatDayMonth(val) {
   if (!val || typeof val !== 'string') return '';
   const trimmed = val.trim();
@@ -95,41 +105,6 @@ function formatDayMonth(val) {
   return trimmed;
 }
 
-function splitDM(dmStr, fallbackMonthKey) {
-  const clean = formatDayMonth(dmStr || '');
-  const match = clean.match(/^(\d{1,2})\.(\d{1,2})$/);
-  if (match) {
-    return {
-      dd: String(Math.min(31, Math.max(1, Number(match[1]) || 1))).padStart(2, '0'),
-      mm: String(Math.min(12, Math.max(1, Number(match[2]) || 1))).padStart(2, '0')
-    };
-  }
-  const [, fallbackMM] = String(fallbackMonthKey || '2026-08').split('-');
-  return { dd: '01', mm: fallbackMM || '08' };
-}
-
-function parseManualDateToISO(inputStr, activeMonth, fallbackYear) {
-  const clean = String(inputStr || '').trim();
-  const [yearPart, monthPart] = activeMonth.split('-');
-  const y = yearPart || fallbackYear || '2026';
-  const defaultM = monthPart || '08';
-
-  const dmMatch = clean.match(/^(\d{1,2})(?:[./-](\d{1,2}))?$/);
-  if (dmMatch) {
-    const day = String(Math.min(31, Math.max(1, Number(dmMatch[1]) || 1))).padStart(2, '0');
-    const month = dmMatch[2]
-      ? String(Math.min(12, Math.max(1, Number(dmMatch[2]) || 1))).padStart(2, '0')
-      : defaultM;
-    return `${y}-${month}-${day}`;
-  }
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    return clean;
-  }
-
-  return `${y}-${defaultM}-01`;
-}
-
 function getNextSequentialDate(existingMonthRows, activeMonth, fallbackYear) {
   const [, activeMM] = activeMonth.split('-');
   const year = fallbackYear || activeMonth.split('-')[0] || '2026';
@@ -141,13 +116,10 @@ function getNextSequentialDate(existingMonthRows, activeMonth, fallbackYear) {
 
   let maxDay = 0;
   itemRows.forEach((r) => {
-    const rawDate = r.date || formatDayMonth(r.isoDate) || '';
-    const match = String(rawDate).match(/^(\d{1,2})/);
-    if (match) {
-      const d = Number(match[1]);
-      if (d >= 1 && d <= 31 && d > maxDay) {
-        maxDay = d;
-      }
+    const iso = toISODate(r.isoDate || r.date, activeMonth);
+    const d = Number(iso.slice(8, 10));
+    if (d >= 1 && d <= 31 && d > maxDay) {
+      maxDay = d;
     }
   });
 
@@ -237,15 +209,14 @@ export default function ManufacturerLedger(props) {
       : 7;
   const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
   const [, activeMM] = activeMonth.split('-');
+  const defaultCalendarDate = `${resolvedYear}-${activeMM}-01`;
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  const [newDepositDay, setNewDepositDay] = useState('01');
-  const [newDepositMonth, setNewDepositMonth] = useState(activeMM);
+  const [newDepositISO, setNewDepositISO] = useState(defaultCalendarDate);
   const [newDepositAmount, setNewDepositAmount] = useState('');
 
   const [editingDepositId, setEditingDepositId] = useState(null);
-  const [editingDepositDay, setEditingDepositDay] = useState('01');
-  const [editingDepositMonth, setEditingDepositMonth] = useState(activeMM);
+  const [editingDepositISO, setEditingDepositISO] = useState(defaultCalendarDate);
   const [editingDepositAmount, setEditingDepositAmount] = useState('');
 
   const [isEditingRemaining, setIsEditingRemaining] = useState(false);
@@ -254,22 +225,21 @@ export default function ManufacturerLedger(props) {
   const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
   const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
   const [selectedPaySource, setSelectedPaySource] = useState('advance');
-  const [paymentDay, setPaymentDay] = useState('01');
-  const [paymentMonthMM, setPaymentMonthMM] = useState(activeMM);
+  const [paymentISO, setPaymentISO] = useState(defaultCalendarDate);
 
   const rowRefs = useRef({});
 
   useEffect(() => {
     const [, mm] = activeMonth.split('-');
     const safeMM = mm || '08';
-    setNewDepositDay('01');
-    setNewDepositMonth(safeMM);
+    const nextDefaultISO = `${resolvedYear}-${safeMM}-01`;
+    setNewDepositISO(nextDefaultISO);
     setEditingDepositId(null);
+    setEditingDepositISO(nextDefaultISO);
     setIsEditingRemaining(false);
     setActivatedSubtotalId(null);
-    setPaymentDay('01');
-    setPaymentMonthMM(safeMM);
-  }, [activeMonth]);
+    setPaymentISO(nextDefaultISO);
+  }, [activeMonth, resolvedYear]);
 
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
@@ -366,9 +336,9 @@ export default function ManufacturerLedger(props) {
     const numericAmount = Number(newDepositAmount);
     if (!newDepositAmount || Number.isNaN(numericAmount) || numericAmount <= 0) return;
 
-    const formattedDM = `${newDepositDay}.${newDepositMonth}`;
-    const chosenISO = `${resolvedYear}-${newDepositMonth}-${newDepositDay}`;
-    const depMonth = `${resolvedYear}-${newDepositMonth}`;
+    const chosenISO = toISODate(newDepositISO, activeMonth);
+    const formattedDM = formatDayMonth(chosenISO);
+    const depMonth = chosenISO.slice(0, 7);
 
     const item = {
       id: Date.now(),
@@ -383,10 +353,8 @@ export default function ManufacturerLedger(props) {
   };
 
   const startEditDeposit = (dep) => {
-    const { dd, mm } = splitDM(dep.date || formatDayMonth(dep.isoDate), activeMonth);
     setEditingDepositId(dep.id);
-    setEditingDepositDay(dd);
-    setEditingDepositMonth(mm);
+    setEditingDepositISO(toISODate(dep.isoDate || dep.date, activeMonth));
     setEditingDepositAmount(String(dep.amount ?? ''));
   };
 
@@ -394,9 +362,9 @@ export default function ManufacturerLedger(props) {
     const numericAmount = Number(editingDepositAmount);
     if (Number.isNaN(numericAmount) || numericAmount < 0) return;
 
-    const formattedDM = `${editingDepositDay}.${editingDepositMonth}`;
-    const chosenISO = `${resolvedYear}-${editingDepositMonth}-${editingDepositDay}`;
-    const depMonth = `${resolvedYear}-${editingDepositMonth}`;
+    const chosenISO = toISODate(editingDepositISO, activeMonth);
+    const formattedDM = formatDayMonth(chosenISO);
+    const depMonth = chosenISO.slice(0, 7);
 
     setDepositsList(
       depositsList.map((d) =>
@@ -436,10 +404,11 @@ export default function ManufacturerLedger(props) {
     const externalTarget = externalRows.find((r) => r.id === id);
     if (externalTarget && onUpdateExternalRow) {
       const patch = { [field]: value };
-      if (field === 'date') {
-        const parsedISO = parseManualDateToISO(value, activeMonth, resolvedYear);
+      if (field === 'isoDate' || field === 'date') {
+        const parsedISO = toISODate(value, activeMonth);
         patch.isoDate = parsedISO;
-        patch.month = getOrderMonthFromRow({ isoDate: parsedISO }, activeMonth, resolvedYear);
+        patch.date = formatDayMonth(parsedISO);
+        patch.month = parsedISO.slice(0, 7);
       }
       if (field === 'shoeId' && value) {
         const found = shoesCatalog.find((s) => s.id === value);
@@ -457,15 +426,11 @@ export default function ManufacturerLedger(props) {
         if (row.id === id) {
           const updated = { ...row, [field]: value };
 
-          if (field === 'date') {
-            const parsedISO = parseManualDateToISO(value, activeMonth, resolvedYear);
+          if (field === 'isoDate' || field === 'date') {
+            const parsedISO = toISODate(value, activeMonth);
             updated.isoDate = parsedISO;
-            updated.month = getOrderMonthFromRow({ isoDate: parsedISO }, activeMonth, resolvedYear);
-          }
-
-          if (field === 'isoDate' && value) {
-            updated.date = formatDayMonth(value);
-            updated.month = getOrderMonthFromRow({ isoDate: value }, activeMonth, resolvedYear);
+            updated.date = formatDayMonth(parsedISO);
+            updated.month = parsedISO.slice(0, 7);
           }
 
           if (field === 'shoeId' && value) {
@@ -620,11 +585,9 @@ export default function ManufacturerLedger(props) {
     const finalAmountUAH = getSubtotalFinalUAH(activatedSubtotalId);
     const diffUAH = finalAmountUAH - checkedCalculatedUAH;
 
-    const safeDay = paymentDay || '01';
-    const safeMM = paymentMonthMM || activeMM;
-    const paidDM = `${safeDay}.${safeMM}`;
-    const paidISO = `${resolvedYear}-${safeMM}-${safeDay}`;
-    const paidM = `${resolvedYear}-${safeMM}`;
+    const paidISO = toISODate(paymentISO, activeMonth);
+    const paidDM = formatDayMonth(paidISO);
+    const paidM = paidISO.slice(0, 7);
 
     const allTargetRows = monthRows.filter(
       (r) => r.type === 'item' && !r.isPaid && r.isSelectedForPay
@@ -991,40 +954,21 @@ export default function ManufacturerLedger(props) {
                   </button>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select
-                    value={newDepositDay}
-                    onChange={(e) => setNewDepositDay(e.target.value)}
+                <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="date"
+                    value={newDepositISO}
+                    onChange={(e) => setNewDepositISO(e.target.value)}
                     style={{
-                      padding: '0.25rem 0.25rem',
+                      padding: '0.25rem 0.35rem',
                       fontSize: '0.75rem',
                       border: '1px solid #d1d5db',
                       borderRadius: '0.35rem',
                       fontWeight: '700',
-                      background: '#fff'
+                      background: '#fff',
+                      color: '#111827'
                     }}
-                  >
-                    {DAYS_IN_MONTH_LIST.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={newDepositMonth}
-                    onChange={(e) => setNewDepositMonth(e.target.value)}
-                    style={{
-                      padding: '0.25rem 0.25rem',
-                      fontSize: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.35rem',
-                      fontWeight: '700',
-                      background: '#fff'
-                    }}
-                  >
-                    {MONTH_OPTIONS_UKR.map((m) => (
-                      <option key={m.mm} value={m.mm}>{m.mm}</option>
-                    ))}
-                  </select>
+                  />
 
                   <input
                     type="number"
@@ -1095,24 +1039,18 @@ export default function ManufacturerLedger(props) {
                               flexWrap: 'wrap'
                             }}
                           >
-                            <select
-                              value={editingDepositDay}
-                              onChange={(e) => setEditingDepositDay(e.target.value)}
-                              style={{ padding: '0.15rem', fontSize: '0.72rem', borderRadius: '0.25rem', border: '1px solid #cbd5e1' }}
-                            >
-                              {DAYS_IN_MONTH_LIST.map((d) => (
-                                <option key={d} value={d}>{d}</option>
-                              ))}
-                            </select>
-                            <select
-                              value={editingDepositMonth}
-                              onChange={(e) => setEditingDepositMonth(e.target.value)}
-                              style={{ padding: '0.15rem', fontSize: '0.72rem', borderRadius: '0.25rem', border: '1px solid #cbd5e1' }}
-                            >
-                              {MONTH_OPTIONS_UKR.map((m) => (
-                                <option key={m.mm} value={m.mm}>{m.mm}</option>
-                              ))}
-                            </select>
+                            <input
+                              type="date"
+                              value={editingDepositISO}
+                              onChange={(e) => setEditingDepositISO(e.target.value)}
+                              style={{
+                                padding: '0.15rem 0.25rem',
+                                fontSize: '0.72rem',
+                                borderRadius: '0.25rem',
+                                border: '1px solid #cbd5e1',
+                                background: '#fff'
+                              }}
+                            />
                             <input
                               type="number"
                               value={editingDepositAmount}
@@ -1447,7 +1385,7 @@ export default function ManufacturerLedger(props) {
               >
                 <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '40px' }}>✓</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
-                <th style={{ padding: '0.6rem 0.4rem', width: '108px' }}>Дата зам.</th>
+                <th style={{ padding: '0.6rem 0.4rem', width: '132px' }}>Дата зам.</th>
                 <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>Ціна $</th>
@@ -1679,8 +1617,8 @@ export default function ManufacturerLedger(props) {
                 const displayName = shoeInfo
                   ? `${shoeInfo.id ? '[' + shoeInfo.id + '] ' : ''}${shoeInfo.name}`
                   : 'Модель не вибрана';
-                const displayDate = row.date || formatDayMonth(row.isoDate) || `01.${activeMM}`;
-                const { dd: rowDay, mm: rowMM } = splitDM(displayDate, rowOrderMonth);
+                const rowISO = toISODate(row.isoDate || row.date, rowOrderMonth);
+                const displayDate = formatDayMonth(rowISO);
                 const displayPaidDate = row.paidDate || row.paidAt || '';
 
                 return (
@@ -1743,45 +1681,20 @@ export default function ManufacturerLedger(props) {
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
-                            <select
-                              value={rowDay}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'date', `${e.target.value}.${rowMM}`)
-                              }
-                              style={{
-                                padding: '0.22rem 0.15rem',
-                                border: '1px solid #cbd5e1',
-                                borderRadius: '0.35rem',
-                                fontSize: '0.78rem',
-                                fontWeight: '700',
-                                background: '#fff'
-                              }}
-                            >
-                              {DAYS_IN_MONTH_LIST.map((d) => (
-                                <option key={d} value={d}>{d}</option>
-                              ))}
-                            </select>
-
-                            <select
-                              value={rowMM}
-                              onChange={(e) =>
-                                handleRowChange(row.id, 'date', `${rowDay}.${e.target.value}`)
-                              }
-                              style={{
-                                padding: '0.22rem 0.15rem',
-                                border: '1px solid #cbd5e1',
-                                borderRadius: '0.35rem',
-                                fontSize: '0.78rem',
-                                fontWeight: '700',
-                                background: '#fff'
-                              }}
-                            >
-                              {MONTH_OPTIONS_UKR.map((m) => (
-                                <option key={m.mm} value={m.mm}>{m.mm}</option>
-                              ))}
-                            </select>
-                          </div>
+                          <input
+                            type="date"
+                            value={rowISO}
+                            onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
+                            style={{
+                              padding: '0.22rem 0.3rem',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '0.35rem',
+                              fontSize: '0.75rem',
+                              fontWeight: '700',
+                              background: '#fff',
+                              color: '#0f172a'
+                            }}
+                          />
 
                           {isFromOtherMonth && (
                             <span
@@ -2159,27 +2072,10 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span>Дата опл.:</span>
-              <select
-                value={paymentDay}
-                onChange={(e) => setPaymentDay(e.target.value)}
-                style={{
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.3rem',
-                  padding: '0.15rem 0.25rem',
-                  fontSize: '0.78rem',
-                  fontWeight: '800',
-                  background: '#ffffff',
-                  cursor: 'pointer'
-                }}
-              >
-                {DAYS_IN_MONTH_LIST.map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-
-              <select
-                value={paymentMonthMM}
-                onChange={(e) => setPaymentMonthMM(e.target.value)}
+              <input
+                type="date"
+                value={paymentISO}
+                onChange={(e) => setPaymentISO(e.target.value)}
                 style={{
                   border: '1px solid #cbd5e1',
                   borderRadius: '0.3rem',
@@ -2190,11 +2086,7 @@ export default function ManufacturerLedger(props) {
                   color: '#4f46e5',
                   cursor: 'pointer'
                 }}
-              >
-                {MONTH_OPTIONS_UKR.map((m) => (
-                  <option key={m.mm} value={m.mm}>{m.label}</option>
-                ))}
-              </select>
+              />
             </div>
 
             <div
