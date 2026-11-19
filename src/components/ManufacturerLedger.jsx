@@ -36,11 +36,19 @@ function getLocalTodayISO() {
 }
 
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
-  if (!rawMonth) return `${fallbackYear}-07`;
+  if (rawMonth === undefined || rawMonth === null || rawMonth === '') {
+    return `${fallbackYear}-08`;
+  }
 
   if (typeof rawMonth === 'object') {
-    const candidate = rawMonth.value || rawMonth.key || rawMonth.month || rawMonth.label || '';
+    const candidate = rawMonth.value ?? rawMonth.key ?? rawMonth.month ?? rawMonth.label ?? '';
     return normalizeMonthKey(candidate, fallbackYear);
+  }
+
+  if (typeof rawMonth === 'number') {
+    // Якщо це індекс місяця від 0 до 11 (наприклад з MonthView)
+    const mm = String(rawMonth + 1).padStart(2, '0');
+    return `${fallbackYear}-${mm}`;
   }
 
   const str = String(rawMonth).trim().toLowerCase();
@@ -63,7 +71,7 @@ function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
     return `${fallbackYear}-${UKRAINIAN_MONTH_MAP[str]}`;
   }
 
-  return `${fallbackYear}-07`;
+  return `${fallbackYear}-08`;
 }
 
 function formatDayMonth(val) {
@@ -119,8 +127,10 @@ export default function ManufacturerLedger(props) {
 
   const todayISO = getLocalTodayISO();
   const resolvedYear = String(selectedYear || year || propCurrentYear || '2026');
+  
+  // Уніфіковано визначаємо активний місяць з будь-якого пропса
   const rawMonthInput =
-    selectedMonth || month || currentMonth || propActiveMonth || `07`;
+    selectedMonth !== undefined ? selectedMonth : (month !== undefined ? month : (currentMonth !== undefined ? currentMonth : (propActiveMonth !== undefined ? propActiveMonth : 7)));
   const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
