@@ -27,6 +27,14 @@ const UKRAINIAN_MONTH_MAP = {
   'грудня': '12'
 };
 
+function getLocalTodayISO() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (!rawMonth) return `${fallbackYear}-07`;
   const str = String(rawMonth).trim().toLowerCase();
@@ -84,7 +92,7 @@ export default function ManufacturerLedger({
   setInitialDebt,
   shoesCatalog = []
 }) {
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = getLocalTodayISO();
   const currentYear = String(selectedYear || year || todayISO.slice(0, 4));
   const rawMonthInput = selectedMonth || month || todayISO.slice(0, 7);
   const activeMonth = normalizeMonthKey(rawMonthInput, currentYear);
@@ -99,12 +107,19 @@ export default function ManufacturerLedger({
   );
 
   const monthRows = rows.filter((r) => {
-    const rowMonth = normalizeMonthKey(r.month || getMonthFromDate(r.isoDate, activeMonth), currentYear);
+    if (r.isEditing) return true;
+    const rowMonth = normalizeMonthKey(
+      r.month || getMonthFromDate(r.isoDate, activeMonth),
+      currentYear
+    );
     return rowMonth === activeMonth;
   });
 
   const monthDeposits = depositsList.filter((d) => {
-    const depMonth = normalizeMonthKey(d.month || getMonthFromDate(d.isoDate, activeMonth), currentYear);
+    const depMonth = normalizeMonthKey(
+      d.month || getMonthFromDate(d.isoDate, activeMonth),
+      currentYear
+    );
     return depMonth === activeMonth;
   });
 
@@ -172,7 +187,7 @@ export default function ManufacturerLedger({
         if (row.id === id) {
           const updated = { ...row, [field]: value };
 
-          if (field === 'isoDate') {
+          if (field === 'isoDate' && value) {
             updated.date = formatDayMonth(value);
             updated.month = normalizeMonthKey(getMonthFromDate(value, activeMonth), currentYear);
           }
@@ -315,7 +330,10 @@ export default function ManufacturerLedger({
 
     setRows((prevRows) =>
       prevRows.map((r) => {
-        const rMonth = normalizeMonthKey(r.month || getMonthFromDate(r.isoDate, activeMonth), currentYear);
+        const rMonth = normalizeMonthKey(
+          r.month || getMonthFromDate(r.isoDate, activeMonth),
+          currentYear
+        );
         if (rMonth === activeMonth && r.type === 'item' && !r.isPaid && r.isSelectedForPay) {
           return {
             ...r,
@@ -562,31 +580,28 @@ export default function ManufacturerLedger({
                 <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
                   <div
                     style={{
-                      position: 'relative',
                       display: 'inline-flex',
                       alignItems: 'center',
                       border: '1px solid #d1d5db',
                       borderRadius: '0.3rem',
-                      padding: '0.2rem 0.4rem',
+                      padding: '0.2rem 0.35rem',
                       background: '#fff',
                       fontSize: '0.75rem',
                       fontWeight: '700',
-                      minWidth: '68px',
-                      justifyContent: 'space-between'
+                      gap: '0.2rem'
                     }}
                   >
                     <span>{formatDayMonth(newDepositDate) || 'ДД.ММ'}</span>
-                    <span style={{ marginLeft: '4px', fontSize: '0.7rem' }}>📅</span>
                     <input
                       type="date"
                       value={newDepositDate}
                       onChange={(e) => setNewDepositDate(e.target.value)}
                       style={{
-                        position: 'absolute',
-                        inset: 0,
-                        opacity: 0,
-                        cursor: 'pointer',
-                        width: '100%'
+                        border: 'none',
+                        background: 'transparent',
+                        fontSize: '0.7rem',
+                        width: '20px',
+                        cursor: 'pointer'
                       }}
                     />
                   </div>
@@ -1145,7 +1160,7 @@ export default function ManufacturerLedger({
                           <div
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: '95px 45px 1fr 60px 100px 80px 100px',
+                              gridTemplateColumns: '115px 45px 1fr 60px 100px 80px 100px',
                               gap: '0.5rem',
                               alignItems: 'center'
                             }}
@@ -1153,29 +1168,27 @@ export default function ManufacturerLedger({
                             <div
                               className="input-field"
                               style={{
-                                position: 'relative',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
                                 fontSize: '0.8rem',
                                 fontWeight: '700',
-                                padding: '0.25rem 0.5rem',
+                                padding: '0.25rem 0.45rem',
                                 background: '#fff',
-                                cursor: 'pointer'
+                                gap: '0.25rem'
                               }}
                             >
                               <span>{displayDate}</span>
-                              <span style={{ fontSize: '0.75rem' }}>📅</span>
                               <input
                                 type="date"
                                 value={row.isoDate || ''}
                                 onChange={(e) => handleRowChange(row.id, 'isoDate', e.target.value)}
                                 style={{
-                                  position: 'absolute',
-                                  inset: 0,
-                                  opacity: 0,
-                                  cursor: 'pointer',
-                                  width: '100%'
+                                  border: 'none',
+                                  background: 'transparent',
+                                  fontSize: '0.75rem',
+                                  width: '22px',
+                                  cursor: 'pointer'
                                 }}
                               />
                             </div>
