@@ -195,11 +195,18 @@ export default function ManufacturerLedger(props) {
   const [newDepositDateText, setNewDepositDateText] = useState(`01.${activeMM}`);
   const [newDepositAmount, setNewDepositAmount] = useState('');
   const [manualSubtotalAmounts, setManualSubtotalAmounts] = useState({});
+
+  // Активація оплати через клік на помаранчеву суму в підсумку проміжку
+  const [activatedSubtotalId, setActivatedSubtotalId] = useState(null);
+  // Вибір способу оплати: 'advance' (з авансу) або 'separate' (окрема оплата)
+  const [selectedPaySource, setSelectedPaySource] = useState('advance');
+
   const rowRefs = useRef({});
 
   useEffect(() => {
     const [, mm] = activeMonth.split('-');
     setNewDepositDateText(`01.${mm || '08'}`);
+    setActivatedSubtotalId(null);
   }, [activeMonth]);
 
   const manufacturerShoes = shoesCatalog.filter(
@@ -234,6 +241,7 @@ export default function ManufacturerLedger(props) {
         rowRate: exchangeRate || 45.0,
         isSelectedForPay: false,
         isPaid: false,
+        paySource: 'advance',
         paidAt: '',
         photo: '',
         isEditing: true
@@ -281,6 +289,11 @@ export default function ManufacturerLedger(props) {
   };
 
   const handleRowChange = (id, field, value) => {
+    if (field === 'isSelectedForPay') {
+      // Якщо змінюємо галочки, скидаємо попередню активацію поки знову не натиснемо на суму в підсумку
+      setActivatedSubtotalId(null);
+    }
+
     setRows(
       rows.map((row) => {
         if (row.id === id) {
@@ -302,7 +315,6 @@ export default function ManufacturerLedger(props) {
             if (found) {
               updated.customCostUSD = found.defaultCostUSD;
               updated.photo = found.photo || '';
-              // Залишаємо рядок відкритим, щоб можна було одразу вписати курс, кількість або лекала
               updated.isEditing = true;
             }
           }
@@ -345,7 +357,7 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Сумуються ТІЛЬКИ НЕОПЛАЧЕНІ пари. Оплачені пари вже не сумуються нікуди.
+  // Підрахунки:
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -358,7 +370,9 @@ export default function ManufacturerLedger(props) {
   let checkedCalculatedUAH = 0;
 
   let paidPairs = 0;
-  let paidUAH = 0;
+  let paidTotalUAH = 0;
+  let paidFromAdvanceUAH = 0;
+  let paidSeparateUAH = 0;
 
   monthRows.forEach((row) => {
     if (row.type === 'item') {
@@ -375,7 +389,14 @@ export default function ManufacturerLedger(props) {
 
       if (isPaid) {
         paidPairs += qty;
-        paidUAH += rowFullUAH;
+        paidTotalUAH += rowFullUAH;
+        // Якщо явно позначено 'separate' — це окрема оплата (не списує аванс).
+        // Якщо 'advance' — списує з авансу.
+        if (row.paySource === 'separate') {
+          paidSeparateUAH += rowFullUAH;
+        } else {
+          paidFromAdvanceUAH += rowFullUAH;
+        }
       } else {
         unpaidPairs += qty;
         unpaidUSD += rowUSD;
@@ -394,14 +415,15 @@ export default function ManufacturerLedger(props) {
   });
 
   const totalDepositsSum = monthDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  const remainingBalance =
-    paymentMode === 'prepaid' && totalDepositsSum > 0
-      ? totalDepositsSum - unpaidUAH
-      : unpaidUAH;
+
+  // Залишок авансу: загальний аванс мінус те, що оплачено САМЕ з авансу
+  const remainingAdvanceUAH = totalDepositsSum - paidFromAdvanceUAH;
 
   const hasCheckedPairs = checkedPairs > 0;
+  const isPaymentActivated = hasCheckedPairs && activatedSubtotalId !== null;
 
   const getSubtotalFinalUAH = (subtotalId) => {
+    if (!subtotalId) return checkedCalculatedUAH;
     const rawManual = manualSubtotalAmounts[subtotalId];
     if (rawManual !== undefined && String(rawManual).trim() !== '') {
       const num = Number(rawManual);
@@ -410,10 +432,17 @@ export default function ManufacturerLedger(props) {
     return checkedCalculatedUAH;
   };
 
-  const handlePaySubtotal = (subtotalId) => {
+  // Клік на помаранчеву суму в підсумку проміжку активує кнопку оплати
+  const handleActivateSubtotal = (subtotalId) => {
     if (!hasCheckedPairs) return;
+    setActivatedSubtotalId((prev) => (prev === subtotalId ? null : subtotalId));
+  };
 
-    const finalAmountUAH = subtotalId ? getSubtotalFinalUAH(subtotalId) : checkedCalculatedUAH;
+  const handleConfirmPayment = (sourceOverride) => {
+    if (!isPaymentActivated) return;
+
+    const chosenSource = sourceOverride || selectedPaySource;
+    const finalAmountUAH = getSubtotalFinalUAH(activatedSubtotalId);
     const diffUAH = finalAmountUAH - checkedCalculatedUAH;
     const nowShort = formatDayMonth(todayISO);
 
@@ -434,6 +463,7 @@ export default function ManufacturerLedger(props) {
             ...r,
             patternCostUAH: (Number(r.patternCostUAH) || 0) + adjust,
             isPaid: true,
+            paySource: chosenSource,
             isSelectedForPay: false,
             paidAt: nowShort,
             isEditing: false
@@ -443,16 +473,18 @@ export default function ManufacturerLedger(props) {
       });
     });
 
-    if (subtotalId) {
+    if (activatedSubtotalId) {
       setManualSubtotalAmounts((prev) => {
         const copy = { ...prev };
-        delete copy[subtotalId];
+        delete copy[activatedSubtotalId];
         return copy;
       });
     }
+    setActivatedSubtotalId(null);
   };
 
   let runningPairNumber = 0;
+  const activePayAmount = isPaymentActivated ? getSubtotalFinalUAH(activatedSubtotalId) : 0;
 
   return (
     <div
@@ -814,10 +846,11 @@ export default function ManufacturerLedger(props) {
                 Оплачено:
               </span>
               <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#15803d' }}>
-                {paidUAH.toFixed(0)} грн
+                {paidTotalUAH.toFixed(0)} грн
               </span>
               <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '700' }}>
-                {paidPairs} пар закрито
+                {paidPairs} пар (з авансу: {paidFromAdvanceUAH.toFixed(0)} грн • окремо:{' '}
+                {paidSeparateUAH.toFixed(0)} грн)
               </span>
             </div>
 
@@ -833,27 +866,34 @@ export default function ManufacturerLedger(props) {
               }}
             >
               <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#4f46e5' }}>
-                {totalDepositsSum > 0 ? 'Аванс мінус неоплачені:' : 'Неоплачено:'}
+                {totalDepositsSum > 0 ? 'Залишок авансу:' : 'Неоплачено:'}
               </span>
               <span
                 style={{
                   fontSize: '1.1rem',
                   fontWeight: '900',
                   color:
-                    remainingBalance < 0
-                      ? '#dc2626'
-                      : remainingBalance === 0
-                      ? '#16a34a'
+                    totalDepositsSum > 0
+                      ? remainingAdvanceUAH < 0
+                        ? '#dc2626'
+                        : '#312e81'
                       : '#312e81'
                 }}
               >
-                {remainingBalance.toFixed(0)} грн
+                {totalDepositsSum > 0
+                  ? `${remainingAdvanceUAH.toFixed(0)} грн`
+                  : `${unpaidUAH.toFixed(0)} грн`}
               </span>
+              {totalDepositsSum > 0 && (
+                <span style={{ fontSize: '0.68rem', color: '#6366f1', fontWeight: '700' }}>
+                  {totalDepositsSum} грн − {paidFromAdvanceUAH.toFixed(0)} грн (оплачено з авансу)
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* ТАБЛИЦЯ З ВІДКРИТИМИ ПОЛЯМИ ДЛЯ ВВОДУ КУРСУ, ЦІНИ, КІЛЬКОСТІ ТА ЛЕКАЛ */}
+        {/* ТАБЛИЦЯ ПОЗИЦІЙ */}
         <div
           style={{
             overflowX: 'auto',
@@ -899,7 +939,7 @@ export default function ManufacturerLedger(props) {
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
                   Лекало грн
                 </th>
-                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', width: '130px' }}>
+                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', width: '135px' }}>
                   Разом грн
                 </th>
                 <th style={{ padding: '0.6rem 0.35rem', width: '36px' }}></th>
@@ -909,6 +949,7 @@ export default function ManufacturerLedger(props) {
               {monthRows.map((row) => {
                 if (row.type === 'subtotal') {
                   const isCollapsed = row.isCollapsed || false;
+                  const isThisActivated = activatedSubtotalId === row.id && hasCheckedPairs;
                   const finalAmount = getSubtotalFinalUAH(row.id);
                   const currentInputValue =
                     manualSubtotalAmounts[row.id] !== undefined
@@ -989,37 +1030,49 @@ export default function ManufacturerLedger(props) {
                                   fontWeight: '800',
                                   textAlign: 'right'
                                 }}
-                                title="Редагуй суму вручну при потребі (наприклад, на округлення)"
+                                title="Редагуй суму вручну при потребі"
                               />
                             </>
                           )}
                         </div>
                       </td>
+
+                      {/* Помаранчева сума в проміжку: клік на неї активує оплату */}
                       <td style={{ padding: '0.6rem 0.5rem', textAlign: 'right' }}>
                         <button
                           type="button"
-                          onClick={() => handlePaySubtotal(row.id)}
+                          onClick={() => handleActivateSubtotal(row.id)}
                           disabled={!hasCheckedPairs}
                           title={
                             hasCheckedPairs
-                              ? 'Натисніть, щоб позначити обрані пари як оплачені'
-                              : 'Поставте галочку біля пар'
+                              ? 'Натисни на суму, щоб активувати кнопку оплати знизу'
+                              : 'Спочатку постав галочки біля пар'
                           }
                           style={{
-                            background: hasCheckedPairs ? '#16a34a' : '#fef3c7',
-                            color: hasCheckedPairs ? '#ffffff' : '#92400e',
-                            border: '2px solid #f59e0b',
-                            padding: '0.3rem 0.65rem',
-                            borderRadius: '0.4rem',
+                            background: isThisActivated
+                              ? '#16a34a'
+                              : hasCheckedPairs
+                              ? '#fef3c7'
+                              : '#fef9c3',
+                            color: isThisActivated ? '#ffffff' : '#92400e',
+                            border: isThisActivated ? '2px solid #15803d' : '2px solid #f59e0b',
+                            padding: '0.3rem 0.7rem',
+                            borderRadius: '0.45rem',
                             fontWeight: '900',
-                            fontSize: '0.82rem',
+                            fontSize: '0.85rem',
                             cursor: hasCheckedPairs ? 'pointer' : 'default',
-                            whiteSpace: 'nowrap'
+                            whiteSpace: 'nowrap',
+                            boxShadow: isThisActivated
+                              ? '0 0 0 3px rgba(22, 163, 74, 0.25)'
+                              : 'none'
                           }}
                         >
-                          {hasCheckedPairs ? `${finalAmount.toFixed(0)} грн • Оплатити` : '0 грн'}
+                          {hasCheckedPairs
+                            ? `${finalAmount.toFixed(0)} грн${isThisActivated ? ' ✓' : ''}`
+                            : '0 грн'}
                         </button>
                       </td>
+
                       <td style={{ textAlign: 'center' }}>
                         <button
                           type="button"
@@ -1049,6 +1102,7 @@ export default function ManufacturerLedger(props) {
                 const rRate = Number(row.rowRate) || 0;
                 const isPaid = Boolean(row.isPaid);
                 const isChecked = Boolean(row.isSelectedForPay);
+                const paySource = row.paySource || 'advance';
 
                 const rowUSD = qty * costUSD;
                 const shoePartUAH = rowUSD * rRate;
@@ -1109,7 +1163,7 @@ export default function ManufacturerLedger(props) {
                       {currentPairNumber}
                     </td>
 
-                    {/* Дата (відкрита для вводу вручну для неоплачених) */}
+                    {/* Дата */}
                     <td style={{ padding: '0.5rem 0.35rem' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
@@ -1134,7 +1188,7 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Фото + Вибір моделі + зелена кнопка Оплачено під оплаченим */}
+                    {/* Фото + Вибір моделі + зелена плашка Оплачено з перемикачем способу */}
                     <td style={{ padding: '0.5rem 0.5rem' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
@@ -1195,22 +1249,43 @@ export default function ManufacturerLedger(props) {
                         </div>
 
                         {isPaid && (
-                          <div>
-                            <button
-                              type="button"
-                              disabled
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            <span
                               style={{
                                 background: '#16a34a',
                                 color: '#ffffff',
-                                border: 'none',
                                 padding: '0.2rem 0.65rem',
                                 borderRadius: '0.4rem',
                                 fontWeight: '800',
                                 fontSize: '0.72rem',
-                                cursor: 'default'
+                                display: 'inline-block'
                               }}
                             >
                               ✓ Оплачено
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRowChange(
+                                  row.id,
+                                  'paySource',
+                                  paySource === 'advance' ? 'separate' : 'advance'
+                                )
+                              }
+                              title="Натисни, щоб змінити: списати з авансу чи окрема оплата"
+                              style={{
+                                background: paySource === 'advance' ? '#dcfce7' : '#e0e7ff',
+                                color: paySource === 'advance' ? '#166534' : '#3730a3',
+                                border: '1px solid #cbd5e1',
+                                padding: '0.18rem 0.5rem',
+                                borderRadius: '0.35rem',
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {paySource === 'advance' ? '💰 з авансу' : '💳 окрема оплата'}
                             </button>
                           </div>
                         )}
@@ -1270,7 +1345,7 @@ export default function ManufacturerLedger(props) {
                       )}
                     </td>
 
-                    {/* Курс (відкритий для вводу кожного разу) */}
+                    {/* Курс */}
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'right' }}>
                       {isPaid ? (
                         <span style={{ fontWeight: '600' }}>{rRate}</span>
@@ -1412,13 +1487,7 @@ export default function ManufacturerLedger(props) {
                     : '0'}
                 </td>
                 <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right', fontSize: '0.95rem' }}>
-                  <div
-                    onClick={() => hasCheckedPairs && handlePaySubtotal(null)}
-                    style={{
-                      color: hasCheckedPairs ? '#16a34a' : '#0f172a',
-                      cursor: hasCheckedPairs ? 'pointer' : 'default'
-                    }}
-                  >
+                  <div style={{ color: '#0f172a' }}>
                     {hasCheckedPairs
                       ? `${checkedCalculatedUAH.toFixed(0)} грн`
                       : `${unpaidUAH.toFixed(0)} грн`}
@@ -1430,6 +1499,7 @@ export default function ManufacturerLedger(props) {
           </table>
         </div>
 
+        {/* НИЖНЯ ПАНЕЛЬ З ВИБОРОМ ОПЛАТИ ТА СІРОЮ/АКТИВНОЮ КНОПКОЮ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1459,30 +1529,98 @@ export default function ManufacturerLedger(props) {
             </button>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a' }}>
-              Неоплачена сума: {unpaidUAH.toFixed(0)} грн
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.65rem',
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end'
+            }}
+          >
+            <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a' }}>
+              Неоплачено: {unpaidUAH.toFixed(0)} грн
             </div>
 
-            <button
-              type="button"
-              onClick={() => hasCheckedPairs && handlePaySubtotal(null)}
-              disabled={!hasCheckedPairs}
+            {/* Перемикач способу оплати (з авансу / окрема оплата) */}
+            <div
               style={{
-                background: hasCheckedPairs ? '#16a34a' : '#94a3b8',
-                color: '#ffffff',
-                border: 'none',
-                padding: '0.55rem 1.25rem',
+                display: 'inline-flex',
+                background: '#f1f5f9',
+                padding: '0.2rem',
                 borderRadius: '0.5rem',
-                cursor: hasCheckedPairs ? 'pointer' : 'default',
-                fontWeight: '900',
-                fontSize: '0.9rem',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                border: '1px solid #cbd5e1',
+                opacity: isPaymentActivated ? 1 : 0.6
               }}
             >
-              {hasCheckedPairs
-                ? `${checkedCalculatedUAH.toFixed(0)} грн • Оплатити`
-                : '0 грн • Оплатити'}
+              <button
+                type="button"
+                disabled={!isPaymentActivated}
+                onClick={() => setSelectedPaySource('advance')}
+                style={{
+                  background: selectedPaySource === 'advance' ? '#16a34a' : 'transparent',
+                  color: selectedPaySource === 'advance' ? '#ffffff' : '#475569',
+                  border: 'none',
+                  padding: '0.35rem 0.65rem',
+                  borderRadius: '0.35rem',
+                  fontSize: '0.78rem',
+                  fontWeight: '800',
+                  cursor: isPaymentActivated ? 'pointer' : 'not-allowed'
+                }}
+              >
+                💰 З авансу
+              </button>
+              <button
+                type="button"
+                disabled={!isPaymentActivated}
+                onClick={() => setSelectedPaySource('separate')}
+                style={{
+                  background: selectedPaySource === 'separate' ? '#4f46e5' : 'transparent',
+                  color: selectedPaySource === 'separate' ? '#ffffff' : '#475569',
+                  border: 'none',
+                  padding: '0.35rem 0.65rem',
+                  borderRadius: '0.35rem',
+                  fontSize: '0.78rem',
+                  fontWeight: '800',
+                  cursor: isPaymentActivated ? 'pointer' : 'not-allowed'
+                }}
+              >
+                💳 Окрема оплата
+              </button>
+            </div>
+
+            {/* Кнопка оплати: сіра, поки не тицьнеш на помаранчеву суму в підсумку проміжку */}
+            <button
+              type="button"
+              onClick={() => handleConfirmPayment()}
+              disabled={!isPaymentActivated}
+              title={
+                isPaymentActivated
+                  ? 'Підтвердити оплату обраних пар'
+                  : 'Щоб активувати оплату, натисни на помаранчеву суму в рядку «Підсумок проміжку»'
+              }
+              style={{
+                background: isPaymentActivated
+                  ? selectedPaySource === 'advance'
+                    ? '#16a34a'
+                    : '#4f46e5'
+                  : '#94a3b8',
+                color: '#ffffff',
+                border: 'none',
+                padding: '0.55rem 1.2rem',
+                borderRadius: '0.5rem',
+                cursor: isPaymentActivated ? 'pointer' : 'not-allowed',
+                fontWeight: '900',
+                fontSize: '0.88rem',
+                boxShadow: isPaymentActivated ? '0 2px 6px rgba(0,0,0,0.15)' : 'none',
+                transition: 'all 0.2s'
+              }}
+            >
+              {isPaymentActivated
+                ? `${activePayAmount.toFixed(0)} грн • Оплатити (${
+                    selectedPaySource === 'advance' ? 'з авансу' : 'окремо'
+                  })`
+                : 'Оплатити (тицьни суму в підсумку)'}
             </button>
           </div>
         </div>
