@@ -44,14 +44,6 @@ const MONTH_OPTIONS_UKR = [
 
 const DAYS_IN_MONTH_LIST = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
 
-function getLocalTodayISO() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
 function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   if (rawMonth === undefined || rawMonth === null || rawMonth === '') {
     return `${fallbackYear}-08`;
@@ -229,7 +221,6 @@ export default function ManufacturerLedger(props) {
     shoesCatalog = []
   } = props;
 
-  const todayISO = getLocalTodayISO();
   const resolvedYear = String(selectedYear || year || propCurrentYear || '2026');
 
   const rawMonthInput =
@@ -272,23 +263,18 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  const carriedAdvanceBalance = Number(carriedAdvanceFromPrev) || 0;
+  const carriedAdvanceBalance = Math.max(0, Number(carriedAdvanceFromPrev) || 0);
 
-  // 1. Рядки, створені у поточному місяці (за датою створення)
+  // Рядки поточного місяця (включно з давніми записами без поля month/isoDate/date)
   const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
+    if (!r.month && !r.isoDate && !r.date) return true;
     const orderMonth = getOrderMonthFromRow(r, activeMonth, resolvedYear);
     return orderMonth === activeMonth;
   });
 
-  // 2. Власні рядки, які показуються в цьому місяці (неоплачені або оплачені саме в цьому місяці)
-  const visibleOwnRows = currentMonthOwnRows.filter((r) => {
-    if (r.type !== 'item' || !r.isPaid || r.isEditing) return true;
-    const paidMonth = getPaidMonthFromRow(r, activeMonth, resolvedYear);
-    return paidMonth === activeMonth;
-  });
-
-  // 3. Неоплачені пари з попередніх місяців (переносяться далі, поки не оплачені)
+  // Якщо пара з цього місяця оплачена іншим місяцем, в цьому місяці вона лишається як створена пара,
+  // а її фінансова оплата переноситься в paidMonth (або показується в paidMonth, якщо це інший місяць)
   const unpaidCarriedFromPrev = externalRows.filter((r) => {
     if (r.type !== 'item' || r.isPaid || r.isEditing) return false;
     const storageM = r._storageMonthKey || activeMonth;
@@ -296,7 +282,6 @@ export default function ManufacturerLedger(props) {
     return orderMonth < activeMonth;
   });
 
-  // 4. Пари з інших місяців, оплачені саме датою цього місяця (переносяться в місяць оплати)
   const paidInThisMonthFromOtherMonths = externalRows.filter((r) => {
     if (r.type !== 'item' || !r.isPaid || r.isEditing) return false;
     const storageM = r._storageMonthKey || activeMonth;
@@ -308,10 +293,10 @@ export default function ManufacturerLedger(props) {
   const monthRows = [
     ...unpaidCarriedFromPrev,
     ...paidInThisMonthFromOtherMonths,
-    ...visibleOwnRows
+    ...currentMonthOwnRows
   ];
 
-  // Всі оплачені пари саме в цьому місяці (за датою оплати)
+  // Оплачені пари саме за датою оплати у цьому місяці
   const allCombinedItems = [
     ...rows.filter((r) => r.type === 'item'),
     ...externalRows.filter((r) => r.type === 'item')
@@ -593,7 +578,6 @@ export default function ManufacturerLedger(props) {
     );
     const firstTargetId = allTargetRows[0]?.id;
 
-    // 1. Оновлюємо рядки, створені у поточному місяці (місяць створення row.month не змінюємо!)
     setRows((prevRows) =>
       prevRows.map((r) => {
         if (allTargetRows.some((t) => t.id === r.id)) {
@@ -629,7 +613,6 @@ export default function ManufacturerLedger(props) {
       })
     );
 
-    // 2. Оновлюємо перенесені з інших місяців пари у їхньому місяці зберігання
     if (onUpdateExternalRow) {
       allTargetRows.forEach((t) => {
         if (t._storageMonthKey) {
@@ -721,7 +704,6 @@ export default function ManufacturerLedger(props) {
         maxWidth: '100%'
       }}
     >
-      {/* МОДАЛЬНЕ ВІКНО ВИБОРУ МОДЕЛІ ЗА ФОТО */}
       {activeRowForPicker && (
         <div
           style={{
@@ -857,7 +839,6 @@ export default function ManufacturerLedger(props) {
         </div>
       )}
 
-      {/* ОСНОВНА КАРТКА ОБЛІКУ */}
       <div className="card" style={{ padding: '1rem' }}>
         <div className="header-box" style={{ padding: '0 0 1rem 0' }}>
           <div
@@ -934,12 +915,12 @@ export default function ManufacturerLedger(props) {
                   💰 Аванси ({activeMonth}):
                 </span>
 
-                {carriedAdvanceBalance !== 0 && (
+                {carriedAdvanceBalance > 0 && (
                   <div
                     style={{
                       fontSize: '0.72rem',
-                      background: carriedAdvanceBalance > 0 ? '#f0fdf4' : '#fef2f2',
-                      color: carriedAdvanceBalance > 0 ? '#15803d' : '#b91c1c',
+                      background: '#f0fdf4',
+                      color: '#15803d',
                       padding: '0.25rem 0.45rem',
                       borderRadius: '0.35rem',
                       fontWeight: '700'
@@ -961,7 +942,6 @@ export default function ManufacturerLedger(props) {
                       fontWeight: '700',
                       background: '#fff'
                     }}
-                    title="День поповнення авансу"
                   >
                     {DAYS_IN_MONTH_LIST.map((d) => (
                       <option key={d} value={d}>{d}</option>
@@ -979,7 +959,6 @@ export default function ManufacturerLedger(props) {
                       fontWeight: '700',
                       background: '#fff'
                     }}
-                    title="Місяць поповнення авансу"
                   >
                     {MONTH_OPTIONS_UKR.map((m) => (
                       <option key={m.mm} value={m.mm}>{m.mm}</option>
@@ -1152,7 +1131,6 @@ export default function ManufacturerLedger(props) {
           </div>
         </div>
 
-        {/* ТАБЛИЦЯ ПОЗИЦІЙ */}
         <div
           style={{
             overflowX: 'auto',
@@ -1179,28 +1157,15 @@ export default function ManufacturerLedger(props) {
                   borderBottom: '2px solid #e2e8f0'
                 }}
               >
-                <th
-                  style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '40px' }}
-                  title="Вибрати пару для оплати"
-                >
-                  ✓
-                </th>
+                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'center', width: '40px' }}>✓</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '42px' }}>№</th>
                 <th style={{ padding: '0.6rem 0.4rem', width: '108px' }}>Дата зам.</th>
                 <th style={{ padding: '0.6rem 0.5rem', minWidth: '210px' }}>Модель / Артикул</th>
                 <th style={{ padding: '0.6rem 0.4rem', textAlign: 'center', width: '64px' }}>К-ть</th>
-                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
-                  Ціна $
-                </th>
-                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '82px' }}>
-                  Курс
-                </th>
-                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>
-                  Лекало грн
-                </th>
-                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', width: '140px' }}>
-                  Разом грн
-                </th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>Ціна $</th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '82px' }}>Курс</th>
+                <th style={{ padding: '0.6rem 0.4rem', textAlign: 'right', width: '92px' }}>Лекало грн</th>
+                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', width: '140px' }}>Разом грн</th>
                 <th style={{ padding: '0.6rem 0.35rem', width: '36px' }}></th>
               </tr>
             </thead>
@@ -1219,18 +1184,9 @@ export default function ManufacturerLedger(props) {
                           borderBottom: '2px solid #86efac'
                         }}
                       >
-                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '900' }}>
-                          ✓
-                        </td>
+                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '900' }}>✓</td>
                         <td colSpan="7" style={{ padding: '0.6rem 0.5rem' }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.5rem',
-                              flexWrap: 'wrap'
-                            }}
-                          >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <span
                               style={{
                                 background: '#16a34a',
@@ -1243,13 +1199,7 @@ export default function ManufacturerLedger(props) {
                             >
                               ✓ Оплачено проміжок
                             </span>
-                            <span
-                              style={{
-                                fontSize: '0.78rem',
-                                color: '#166534',
-                                fontWeight: '700'
-                              }}
-                            >
+                            <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: '700' }}>
                               ({closedInfo.count} шт • ${closedInfo.usd.toFixed(0)} •{' '}
                               {closedInfo.source === 'advance' ? 'з авансу' : 'окрема оплата'})
                             </span>
@@ -1283,7 +1233,6 @@ export default function ManufacturerLedger(props) {
                               cursor: 'pointer',
                               fontWeight: 'bold'
                             }}
-                            title="Видалити рядок підсумку"
                           >
                             ×
                           </button>
@@ -1315,14 +1264,7 @@ export default function ManufacturerLedger(props) {
                     >
                       <td></td>
                       <td colSpan="7" style={{ padding: '0.6rem 0.5rem' }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            flexWrap: 'wrap'
-                          }}
-                        >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                           <button
                             type="button"
                             onClick={() => handleRowChange(row.id, 'isCollapsed', !isCollapsed)}
@@ -1344,13 +1286,7 @@ export default function ManufacturerLedger(props) {
                           </span>
                           {!isCollapsed && (
                             <>
-                              <span
-                                style={{
-                                  fontSize: '0.75rem',
-                                  color: '#78350f',
-                                  fontWeight: '700'
-                                }}
-                              >
+                              <span style={{ fontSize: '0.75rem', color: '#78350f', fontWeight: '700' }}>
                                 {calcSummaryText}
                               </span>
                               <input
@@ -1374,7 +1310,6 @@ export default function ManufacturerLedger(props) {
                                   fontWeight: '800',
                                   textAlign: 'right'
                                 }}
-                                title="Редагуй суму вручну при потребі"
                               />
                             </>
                           )}
@@ -1386,11 +1321,6 @@ export default function ManufacturerLedger(props) {
                           type="button"
                           onClick={() => handleActivateSubtotal(row.id)}
                           disabled={!hasCheckedPairs}
-                          title={
-                            hasCheckedPairs
-                              ? 'Натисни на суму, щоб активувати кнопку оплати знизу'
-                              : 'Спочатку постав галочки біля пар'
-                          }
                           style={{
                             background: isThisActivated
                               ? '#16a34a'
@@ -1484,12 +1414,7 @@ export default function ManufacturerLedger(props) {
                   >
                     <td style={{ padding: '0.5rem 0.35rem', textAlign: 'center' }}>
                       {isPaid ? (
-                        <span
-                          title="Оплачено"
-                          style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}
-                        >
-                          ✓
-                        </span>
+                        <span style={{ color: '#16a34a', fontWeight: '900', fontSize: '0.9rem' }}>✓</span>
                       ) : (
                         <input
                           type="checkbox"
@@ -1503,7 +1428,6 @@ export default function ManufacturerLedger(props) {
                             cursor: 'pointer',
                             accentColor: '#4f46e5'
                           }}
-                          title="Відмітити пару для оплати"
                         />
                       )}
                     </td>
@@ -1524,13 +1448,7 @@ export default function ManufacturerLedger(props) {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                           <span style={{ fontWeight: '600' }}>{displayDate || '—'}</span>
                           {isFromOtherMonth && (
-                            <span
-                              style={{
-                                fontSize: '0.62rem',
-                                fontWeight: '700',
-                                color: '#64748b'
-                              }}
-                            >
+                            <span style={{ fontSize: '0.62rem', fontWeight: '700', color: '#64748b' }}>
                               зам. {rowOrderMonth.slice(5, 7)}
                             </span>
                           )}
@@ -1551,7 +1469,6 @@ export default function ManufacturerLedger(props) {
                                 fontWeight: '700',
                                 background: '#fff'
                               }}
-                              title="День замовлення"
                             >
                               {DAYS_IN_MONTH_LIST.map((d) => (
                                 <option key={d} value={d}>{d}</option>
@@ -1571,7 +1488,6 @@ export default function ManufacturerLedger(props) {
                                 fontWeight: '700',
                                 background: '#fff'
                               }}
-                              title="Місяць створення пари"
                             >
                               {MONTH_OPTIONS_UKR.map((m) => (
                                 <option key={m.mm} value={m.mm}>{m.mm}</option>
@@ -1616,7 +1532,6 @@ export default function ManufacturerLedger(props) {
                               justifyContent: 'center',
                               flexShrink: 0
                             }}
-                            title={isPaid ? '' : 'Обрати модель за фото'}
                           >
                             {row.photo ? (
                               <img
@@ -1658,14 +1573,7 @@ export default function ManufacturerLedger(props) {
                         </div>
 
                         {isPaid && (
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.4rem',
-                              flexWrap: 'wrap'
-                            }}
-                          >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                             <span
                               style={{
                                 background: '#16a34a',
@@ -1722,9 +1630,7 @@ export default function ManufacturerLedger(props) {
                           type="number"
                           min="1"
                           value={row.quantity}
-                          onChange={(e) =>
-                            handleRowChange(row.id, 'quantity', Number(e.target.value))
-                          }
+                          onChange={(e) => handleRowChange(row.id, 'quantity', Number(e.target.value))}
                           style={{
                             width: '54px',
                             padding: '0.25rem 0.3rem',
@@ -1748,9 +1654,7 @@ export default function ManufacturerLedger(props) {
                           step="0.01"
                           placeholder="$"
                           value={row.customCostUSD}
-                          onChange={(e) =>
-                            handleRowChange(row.id, 'customCostUSD', e.target.value)
-                          }
+                          onChange={(e) => handleRowChange(row.id, 'customCostUSD', e.target.value)}
                           style={{
                             width: '82px',
                             padding: '0.25rem 0.35rem',
@@ -1785,7 +1689,6 @@ export default function ManufacturerLedger(props) {
                             textAlign: 'right',
                             background: '#fff'
                           }}
-                          title="Впиши актуальний курс для цієї пари"
                         />
                       )}
                     </td>
@@ -1798,9 +1701,7 @@ export default function ManufacturerLedger(props) {
                           type="number"
                           placeholder="0"
                           value={row.patternCostUAH || ''}
-                          onChange={(e) =>
-                            handleRowChange(row.id, 'patternCostUAH', e.target.value)
-                          }
+                          onChange={(e) => handleRowChange(row.id, 'patternCostUAH', e.target.value)}
                           style={{
                             width: '82px',
                             padding: '0.25rem 0.35rem',
@@ -1913,7 +1814,6 @@ export default function ManufacturerLedger(props) {
           </table>
         </div>
 
-        {/* НИЖНЯ ПАНЕЛЬ З ВИБОРОМ ДАТИ ОПЛАТИ ЗІ СПИСКУ, ДЖЕРЕЛОМ ТА КНОПКОЮ */}
         <div
           style={{
             marginTop: '1rem',
@@ -1969,7 +1869,6 @@ export default function ManufacturerLedger(props) {
                 borderRadius: '0.45rem',
                 border: '1px solid #cbd5e1'
               }}
-              title="Обери зі списку день і місяць оплати — пара перенесеться у вибраний місяць оплати"
             >
               <span>Дата опл.:</span>
               <select
@@ -2057,11 +1956,6 @@ export default function ManufacturerLedger(props) {
               type="button"
               onClick={handleConfirmPayment}
               disabled={!isPaymentActivated}
-              title={
-                isPaymentActivated
-                  ? 'Підтвердити оплату обраних пар'
-                  : 'Щоб активувати оплату, натисни на помаранчеву суму в рядку «Підсумок проміжку»'
-              }
               style={{
                 background: isPaymentActivated
                   ? selectedPaySource === 'advance'

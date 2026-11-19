@@ -102,7 +102,8 @@ function calculateCarriedAdvance(allMonthsMap, currentMonthKey) {
     });
   });
 
-  return prevDepositsSum - prevPaidFromAdvanceUAH;
+  // Не переносимо від'ємний залишок авансу в наступні місяці
+  return Math.max(0, prevDepositsSum - prevPaidFromAdvanceUAH);
 }
 
 function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
@@ -146,7 +147,7 @@ export default function MonthView() {
   const [expenses, setExpenses] = useState([]);
   const [shoesCatalog, setShoesCatalog] = useState([]);
 
-  const skipNextSave = useRef(true);
+  const canAutoSave = useRef(false);
   const catalogDirty = useRef(false);
 
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
@@ -155,7 +156,7 @@ export default function MonthView() {
     let isCancelled = false;
 
     async function loadDataForMonth() {
-      skipNextSave.current = true;
+      canAutoSave.current = false;
       setIsLoading(true);
       setSyncStatus('loading');
 
@@ -194,6 +195,9 @@ export default function MonthView() {
 
       setSyncStatus('saved');
       setIsLoading(false);
+      setTimeout(() => {
+        if (!isCancelled) canAutoSave.current = true;
+      }, 150);
     }
 
     loadDataForMonth();
@@ -204,11 +208,7 @@ export default function MonthView() {
   }, [monthKey, selectedMonth]);
 
   useEffect(() => {
-    if (isLoading) return;
-    if (skipNextSave.current) {
-      skipNextSave.current = false;
-      return;
-    }
+    if (isLoading || !canAutoSave.current) return;
 
     const depositsTotal = milaDepositsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
@@ -340,8 +340,6 @@ export default function MonthView() {
   const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
   const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
 
-  // Для загальної звітності:
-  // 1) Усі пари, створені у поточному місяці (для лічильника "Замовлено в міс.")
   const milaOrderedThisMonth = milaRows.filter(
     (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
   );
@@ -349,7 +347,6 @@ export default function MonthView() {
     (r) => r.type === 'item' && getRowOrderMonth(r, monthKey) === monthKey
   );
 
-  // 2) Усі пари (зі свого або інших місяців), які оплачені саме в цьому місяці (за датою оплати)
   const milaPaidThisMonth = [
     ...milaRows.filter((r) => r.type === 'item' && r.isPaid && getRowPaidMonth(r, monthKey) === monthKey),
     ...externalMilaRows.filter(
