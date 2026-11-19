@@ -68,6 +68,64 @@ function getRowPaidMonth(row, fallbackMonthKey) {
   return getRowOrderMonth(row, fallbackMonthKey);
 }
 
+/**
+ * Рахує перенесений залишок авансу ланцюжком з усіх попередніх місяців до targetMonthKey
+ * (липень -> серпень -> вересень -> жовтень -> листопад і далі)
+ */
+function calculateChainedAdvance(allMonthsMap, targetMonthKey) {
+  const keysSet = new Set(Object.keys(allMonthsMap || {}));
+
+  const [targetYearStr, targetMonthStr] = targetMonthKey.split('-');
+  const targetYear = Number(targetYearStr) || 2026;
+  const targetMonthNum = Number(targetMonthStr) || 1;
+
+  for (let m = 1; m < targetMonthNum; m++) {
+    keysSet.add(`${targetYear}-${String(m).padStart(2, '0')}`);
+  }
+
+  const orderedPrevKeys = Array.from(keysSet)
+    .filter((k) => k < targetMonthKey)
+    .sort();
+
+  let runningAdvance = 0;
+
+  orderedPrevKeys.forEach((key) => {
+    const mData = allMonthsMap?.[key] || {};
+    const parts = key.split('-');
+    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
+
+    // 1. Внесені аванси цього місяця
+    const mDeposits = getDepositsForMonth(mData, key, mIdx);
+    const monthDepositsSum = mDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+    // 2. Оплати "з авансу", проведені датою цього місяця (з будь-якого місяця замовлення)
+    let monthPaidFromAdvanceUAH = 0;
+
+    Object.keys(allMonthsMap || {}).forEach((sourceKey) => {
+      const sourceData = allMonthsMap[sourceKey] || {};
+      const rows = Array.isArray(sourceData.milaRows) ? sourceData.milaRows : [];
+
+      rows.forEach((row) => {
+        if (row.type !== 'item' || row.isEditing || !row.isPaid) return;
+        if (row.paySource === 'separate') return;
+
+        const paidM = getRowPaidMonth(row, sourceKey);
+        if (paidM === key) {
+          const qty = Number(row.quantity) || 0;
+          const costUSD = Number(row.customCostUSD) || 0;
+          const patternUAH = Number(row.patternCostUAH) || 0;
+          const rate = Number(row.rowRate) || Number(sourceData.milaRate) || 45;
+          monthPaidFromAdvanceUAH += qty * costUSD * rate + patternUAH;
+        }
+      });
+    });
+
+    runningAdvance = Math.max(0, runningAdvance + monthDepositsSum - monthPaidFromAdvanceUAH);
+  });
+
+  return runningAdvance;
+}
+
 function collectCrossMonthRows(allMonthsMap, fieldName, currentMonthKey) {
   const seenIds = new Set();
   const result = [];
@@ -298,6 +356,7 @@ export default function MonthView() {
     }
   };
 
+  const carriedAdvanceFromPrev = calculateChainedAdvance(allMonthsMap, monthKey);
   const externalMilaRows = collectCrossMonthRows(allMonthsMap, 'milaRows', monthKey);
   const externalValeraRows = collectCrossMonthRows(allMonthsMap, 'valeraRows', monthKey);
 
@@ -429,6 +488,7 @@ export default function MonthView() {
               }
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
+              carriedAdvanceFromPrev={carriedAdvanceFromPrev}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
