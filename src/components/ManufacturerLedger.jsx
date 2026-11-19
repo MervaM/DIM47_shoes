@@ -46,7 +46,6 @@ function normalizeMonthKey(rawMonth, fallbackYear = '2026') {
   }
 
   if (typeof rawMonth === 'number') {
-    // Якщо це індекс місяця від 0 до 11 (наприклад з MonthView)
     const mm = String(rawMonth + 1).padStart(2, '0');
     return `${fallbackYear}-${mm}`;
   }
@@ -128,15 +127,23 @@ export default function ManufacturerLedger(props) {
   const todayISO = getLocalTodayISO();
   const resolvedYear = String(selectedYear || year || propCurrentYear || '2026');
   
-  // Уніфіковано визначаємо активний місяць з будь-якого пропса
   const rawMonthInput =
     selectedMonth !== undefined ? selectedMonth : (month !== undefined ? month : (currentMonth !== undefined ? currentMonth : (propActiveMonth !== undefined ? propActiveMonth : 7)));
   const activeMonth = normalizeMonthKey(rawMonthInput, resolvedYear);
 
   const [activeRowForPicker, setActiveRowForPicker] = useState(null);
-  const [newDepositDate, setNewDepositDate] = useState(`${activeMonth}-01`);
+  
+  // Синхронізуємо дефолтну дату нового авансу з активним місяцем шапки
+  const defaultDepositDate = `${activeMonth}-01`;
+  const [newDepositDate, setNewDepositDate] = useState(defaultDepositDate);
   const [newDepositAmount, setNewDepositAmount] = useState('');
+  
   const rowRefs = useRef({});
+
+  // Автоматично оновлюємо дату авансу, якщо змінюється місяць у шапці
+  React.useEffect(() => {
+    setNewDepositDate(`${activeMonth}-01`);
+  }, [activeMonth]);
 
   const manufacturerShoes = shoesCatalog.filter(
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
