@@ -149,6 +149,23 @@ function collectPaidRowsForMonth(allMonthsMap, targetMonthKey) {
   return { milaPaid, valeraPaid };
 }
 
+function getUnpaidFromPreviousMonths(allMonthsMap, currentMonthKey, manufacturerKey) {
+  const carried = [];
+  Object.keys(allMonthsMap || {})
+    .sort()
+    .forEach((k) => {
+      if (k < currentMonthKey) {
+        const list = allMonthsMap[k]?.[manufacturerKey] || [];
+        list.forEach((r) => {
+          if (r.type === 'item' && !r.isPaid) {
+            carried.push({ ...r, _originMonth: k });
+          }
+        });
+      }
+    });
+  return carried;
+}
+
 export default function MonthView() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth()); // 0-11
@@ -225,6 +242,7 @@ export default function MonthView() {
     loadDataForMonth();
   }, [monthKey, selectedMonth]);
 
+  // Синхронізація та збереження даних у хмару
   useEffect(() => {
     if (isLoading) return;
     if (isRemoteUpdate.current) {
@@ -259,15 +277,30 @@ export default function MonthView() {
         .maybeSingle();
 
       const currentRoot = existingData?.data || {};
-      const months = {
-        ...(currentRoot.months || {}),
-        [monthKey]: updatedMonthObj
-      };
+      const nextMonths = { ...(currentRoot.months || {}) };
+
+      // Якщо якась пара була перенесена з попереднього місяця і оплачена в поточному —
+      // видаляємо її дубль з попереднього місяця, щоб не висіла там як неоплачена
+      const currentMilaIds = new Set(milaRows.map((r) => r.id));
+      const currentValeraIds = new Set(valeraRows.map((r) => r.id));
+
+      Object.keys(nextMonths).forEach((k) => {
+        if (k < monthKey && nextMonths[k]) {
+          if (Array.isArray(nextMonths[k].milaRows)) {
+            nextMonths[k].milaRows = nextMonths[k].milaRows.filter((r) => !currentMilaIds.has(r.id));
+          }
+          if (Array.isArray(nextMonths[k].valeraRows)) {
+            nextMonths[k].valeraRows = nextMonths[k].valeraRows.filter((r) => !currentValeraIds.has(r.id));
+          }
+        }
+      });
+
+      nextMonths[monthKey] = updatedMonthObj;
 
       const payloadToSave = {
         ...currentRoot,
         shoesCatalog,
-        months
+        months: nextMonths
       };
 
       const { error } = await supabase
@@ -278,6 +311,7 @@ export default function MonthView() {
         console.error('Помилка збереження:', error);
         setSyncStatus('error');
       } else {
+        setAllMonthsMap(nextMonths);
         setSyncStatus('saved');
       }
     }, 600);
@@ -288,6 +322,27 @@ export default function MonthView() {
   const milaCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Міла');
   const valeraCarry = calculateCarryOverForManufacturer(allMonthsMap, monthKey, 'Валерій');
   const paidByDateMap = collectPaidRowsForMonth(allMonthsMap, monthKey);
+
+  // Неоплачені пари з попередніх місяців, які перетягуються в поточний
+  const carriedUnpaidMila = getUnpaidFromPreviousMonths(allMonthsMap, monthKey, 'milaRows').filter(
+    (c) => !milaRows.some((r) => r.id === c.id)
+  );
+  const carriedUnpaidValera = getUnpaidFromPreviousMonths(allMonthsMap, monthKey, 'valeraRows').filter(
+    (c) => !valeraRows.some((r) => r.id === c.id)
+  );
+
+  const combinedMilaRows = [...carriedUnpaidMila, ...milaRows];
+  const combinedValeraRows = [...carriedUnpaidValera, ...valeraRows];
+
+  const handleSetMilaRows = (nextRows) => {
+    const cleaned = nextRows.map(({ _originMonth, ...rest }) => rest);
+    setMilaRows(cleaned);
+  };
+
+  const handleSetValeraRows = (nextRows) => {
+    const cleaned = nextRows.map(({ _originMonth, ...rest }) => rest);
+    setValeraRows(cleaned);
+  };
 
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
@@ -372,8 +427,8 @@ export default function MonthView() {
               monthKey={monthKey}
               milaPaidRows={paidByDateMap.milaPaid}
               valeraPaidRows={paidByDateMap.valeraPaid}
-              milaRows={milaRows}
-              valeraRows={valeraRows}
+              milaRows={combinedMilaRows}
+              valeraRows={combinedValeraRows}
               milaRate={milaRate}
               valeraRate={valeraRate}
               expenses={expenses}
@@ -387,8 +442,8 @@ export default function MonthView() {
               paymentMode="prepaid"
               selectedMonth={selectedMonth}
               selectedYear={selectedYear}
-              rows={milaRows}
-              setRows={setMilaRows}
+              rows={combinedMilaRows}
+              setRows={handleSetMilaRows}
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
               carriedAdvanceFromPrev={milaCarry.carriedAdvance}
@@ -407,8 +462,8 @@ export default function MonthView() {
               paymentMode="postpaid"
               selectedMonth={selectedMonth}
               selectedYear={selectedYear}
-              rows={valeraRows}
-              setRows={setValeraRows}
+              rows={combinedValeraRows}
+              setRows={handleSetValeraRows}
               carriedAdvanceFromPrev={valeraCarry.carriedAdvance}
               carriedDebtFromPrev={valeraCarry.carriedDebt}
               exchangeRate={valeraRate}

@@ -269,14 +269,23 @@ export default function ManufacturerLedger(props) {
     ? localPrevDepositsSum - localPrevPaidFromAdvanceUAH
     : Number(carriedAdvanceFromPrev) || 0;
 
-  // Показуємо рядки поточного місяця, а також неоплачені пари з попередніх місяців (перетягнуті в поточний місяць)
-  const monthRows = rows.filter((r) => {
+  // 1. Всі рядки, які вже належать цьому місяцю (включно зі старими записами без поля month)
+  const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
+    if (!r.month && !r.isoDate) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    if (rowMonth === activeMonth) return true;
-    if (row.type === 'item' && !r.isPaid && rowMonth < activeMonth) return true;
-    return false;
+    return rowMonth === activeMonth;
   });
+
+  // 2. Неоплачені пари з попередніх місяців (перетягуються в поточний, поки не оплачені)
+  const carriedUnpaidRows = rows.filter((r) => {
+    if (r.type !== 'item' || r.isPaid || r.isEditing) return false;
+    if (!r.month && !r.isoDate) return false;
+    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
+    return rowMonth < activeMonth;
+  });
+
+  const monthRows = [...carriedUnpaidRows, ...currentMonthOwnRows];
 
   // Оплачені рядки, дата оплати яких у поточному місяці
   const monthPaidRows = rows.filter((r) => {
@@ -290,7 +299,7 @@ export default function ManufacturerLedger(props) {
   });
 
   const handleAddRow = () => {
-    const nextSeq = getNextSequentialDate(monthRows, activeMonth, resolvedYear);
+    const nextSeq = getNextSequentialDate(currentMonthOwnRows, activeMonth, resolvedYear);
     setRows([
       ...rows,
       {
@@ -519,11 +528,7 @@ export default function ManufacturerLedger(props) {
 
     setRows((prevRows) => {
       const targetIds = prevRows
-        .filter((r) => {
-          const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-          const isInCurrentWindow = rMonth === activeMonth || (!r.isPaid && rMonth < activeMonth);
-          return isInCurrentWindow && r.type === 'item' && !r.isPaid && r.isSelectedForPay;
-        })
+        .filter((r) => r.type === 'item' && !r.isPaid && r.isSelectedForPay)
         .map((r) => r.id);
 
       const firstId = targetIds[0];
