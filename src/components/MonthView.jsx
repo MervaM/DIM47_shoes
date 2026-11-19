@@ -27,6 +27,67 @@ function getDepositsForMonth(monthData, monthKey, monthIndex) {
   return [];
 }
 
+function getRowPaidMonth(row, fallbackMonthKey) {
+  if (row?.paidMonth && /^\d{4}-\d{2}$/.test(String(row.paidMonth))) {
+    return String(row.paidMonth);
+  }
+  if (row?.paidIsoDate && typeof row.paidIsoDate === 'string' && row.paidIsoDate.includes('-')) {
+    const parts = row.paidIsoDate.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  const rawDM = row?.paidDate || row?.paidAt;
+  const fallbackYear = fallbackMonthKey.split('-')[0] || '2026';
+  if (rawDM && typeof rawDM === 'string' && rawDM.includes('.')) {
+    const parts = rawDM.split('.');
+    if (parts.length >= 2) {
+      return `${fallbackYear}-${parts[1].padStart(2, '0')}`;
+    }
+  }
+  if (row?.month && /^\d{4}-\d{2}$/.test(String(row.month))) {
+    return String(row.month);
+  }
+  return fallbackMonthKey;
+}
+
+function calculateCarriedAdvance(allMonthsMap, currentMonthKey) {
+  let prevDepositsSum = 0;
+  let prevPaidFromAdvanceUAH = 0;
+
+  const sortedKeys = Object.keys(allMonthsMap || {}).sort();
+
+  sortedKeys.forEach((key) => {
+    const mData = allMonthsMap[key] || {};
+    const parts = key.split('-');
+    const mIdx = parts[1] ? Math.max(0, Number(parts[1]) - 1) : 0;
+
+    if (key < currentMonthKey) {
+      const mDeposits = getDepositsForMonth(mData, key, mIdx);
+      mDeposits.forEach((d) => {
+        prevDepositsSum += Number(d.amount) || 0;
+      });
+    }
+
+    const rows = Array.isArray(mData.milaRows) ? mData.milaRows : [];
+    rows.forEach((row) => {
+      if (row.type !== 'item' || row.isEditing || !row.isPaid) return;
+      if (row.paySource === 'separate') return;
+
+      const paidM = getRowPaidMonth(row, key);
+      if (paidM < currentMonthKey) {
+        const qty = Number(row.quantity) || 0;
+        const costUSD = Number(row.customCostUSD) || 0;
+        const patternUAH = Number(row.patternCostUAH) || 0;
+        const rate = Number(row.rowRate) || Number(mData.milaRate) || 45;
+        prevPaidFromAdvanceUAH += qty * costUSD * rate + patternUAH;
+      }
+    });
+  });
+
+  return prevDepositsSum - prevPaidFromAdvanceUAH;
+}
+
 export default function MonthView() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -35,6 +96,8 @@ export default function MonthView() {
   const [activeTab, setActiveTab] = useState('summary');
   const [isLoading, setIsLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState('saved');
+
+  const [allMonthsMap, setAllMonthsMap] = useState({});
 
   const [milaDepositsList, setMilaDepositsList] = useState([]);
   const [milaInitialDebt, setMilaInitialDebt] = useState(0);
@@ -45,17 +108,18 @@ export default function MonthView() {
   const [valeraRows, setValeraRows] = useState([]);
 
   const [expenses, setExpenses] = useState([]);
-
-  // Каталог підтягується тільки з бази
   const [shoesCatalog, setShoesCatalog] = useState([]);
 
-  const isRemoteUpdate = useRef(false);
+  const skipNextSave = useRef(true);
   const catalogDirty = useRef(false);
 
   const monthKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
 
   useEffect(() => {
+    let isCancelled = false;
+
     async function loadDataForMonth() {
+      skipNextSave.current = true;
       setIsLoading(true);
       setSyncStatus('loading');
 
@@ -65,39 +129,48 @@ export default function MonthView() {
         .eq('id', 1)
         .maybeSingle();
 
+      if (isCancelled) return;
+
       if (error) {
         console.error('Помилка завантаження:', error);
         setSyncStatus('error');
-      } else if (data && data.data) {
-        const allMonthsData = data.data.months || {};
-        const monthData = allMonthsData[monthKey] || {};
-        const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
-
-        isRemoteUpdate.current = true;
-        setMilaDepositsList(loadedDeposits);
-        setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
-        setMilaRate(monthData.milaRate ?? 45.0);
-        setMilaRows(monthData.milaRows ?? []);
-        setValeraRate(monthData.valeraRate ?? 45.0);
-        setValeraRows(monthData.valeraRows ?? []);
-        setExpenses(monthData.expenses ?? []);
-
-        if (Array.isArray(data.data.shoesCatalog)) {
-          setShoesCatalog(data.data.shoesCatalog);
-        }
-
-        setSyncStatus('saved');
+        setIsLoading(false);
+        return;
       }
+
+      const rootData = data?.data || {};
+      const allMonthsData = rootData.months || {};
+      const monthData = allMonthsData[monthKey] || {};
+      const loadedDeposits = getDepositsForMonth(monthData, monthKey, selectedMonth);
+
+      setAllMonthsMap(allMonthsData);
+      setMilaDepositsList(loadedDeposits);
+      setMilaInitialDebt(monthData.milaInitialDebt ?? 0);
+      setMilaRate(monthData.milaRate ?? 45.0);
+      setMilaRows(Array.isArray(monthData.milaRows) ? monthData.milaRows : []);
+      setValeraRate(monthData.valeraRate ?? 45.0);
+      setValeraRows(Array.isArray(monthData.valeraRows) ? monthData.valeraRows : []);
+      setExpenses(Array.isArray(monthData.expenses) ? monthData.expenses : []);
+
+      if (Array.isArray(rootData.shoesCatalog)) {
+        setShoesCatalog(rootData.shoesCatalog);
+      }
+
+      setSyncStatus('saved');
       setIsLoading(false);
     }
 
     loadDataForMonth();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [monthKey, selectedMonth]);
 
   useEffect(() => {
     if (isLoading) return;
-    if (isRemoteUpdate.current) {
-      isRemoteUpdate.current = false;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
       return;
     }
 
@@ -114,7 +187,14 @@ export default function MonthView() {
       expenses
     };
 
+    setAllMonthsMap((prev) => ({
+      ...prev,
+      [monthKey]: updatedMonthObj
+    }));
+
     setSyncStatus('saving');
+    const currentMonthKey = monthKey;
+
     const timer = setTimeout(async () => {
       const { data: existingData } = await supabase
         .from('app_state')
@@ -125,10 +205,9 @@ export default function MonthView() {
       const currentRoot = existingData?.data || {};
       const nextMonths = {
         ...(currentRoot.months || {}),
-        [monthKey]: updatedMonthObj
+        [currentMonthKey]: updatedMonthObj
       };
 
-      // Каталог у базі оновлюється ТІЛЬКИ якщо ти сама його змінила у вкладці "Каталог взуття"
       const nextCatalog = catalogDirty.current
         ? shoesCatalog
         : (currentRoot.shoesCatalog ?? shoesCatalog);
@@ -148,17 +227,31 @@ export default function MonthView() {
         setSyncStatus('error');
       } else {
         catalogDirty.current = false;
+        setAllMonthsMap(nextMonths);
         setSyncStatus('saved');
       }
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [milaDepositsList, milaInitialDebt, milaRate, milaRows, valeraRate, valeraRows, expenses, shoesCatalog, monthKey, isLoading]);
+  }, [
+    milaDepositsList,
+    milaInitialDebt,
+    milaRate,
+    milaRows,
+    valeraRate,
+    valeraRows,
+    expenses,
+    shoesCatalog,
+    monthKey,
+    isLoading
+  ]);
 
   const handleSetShoesCatalog = (updater) => {
     catalogDirty.current = true;
     setShoesCatalog(updater);
   };
+
+  const carriedAdvanceFromPrev = calculateCarriedAdvance(allMonthsMap, monthKey);
 
   return (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1.5rem', fontFamily: 'system-ui, sans-serif' }}>
@@ -219,16 +312,16 @@ export default function MonthView() {
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', background: '#f3f4f6', padding: '0.35rem', borderRadius: '0.75rem', width: 'fit-content', gap: '0.25rem' }}>
-          <button onClick={() => setActiveTab('summary')} className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}>
+          <button type="button" onClick={() => setActiveTab('summary')} className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}>
             📊 Загальна звітність
           </button>
-          <button onClick={() => setActiveTab('mila')} className={`tab-btn ${activeTab === 'mila' ? 'active' : ''}`}>
+          <button type="button" onClick={() => setActiveTab('mila')} className={`tab-btn ${activeTab === 'mila' ? 'active' : ''}`}>
             Міла (Аванс)
           </button>
-          <button onClick={() => setActiveTab('valera')} className={`tab-btn ${activeTab === 'valera' ? 'active' : ''}`}>
+          <button type="button" onClick={() => setActiveTab('valera')} className={`tab-btn ${activeTab === 'valera' ? 'active' : ''}`}>
             Валерій (Після видачі)
           </button>
-          <button onClick={() => setActiveTab('catalog')} className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}>
+          <button type="button" onClick={() => setActiveTab('catalog')} className={`tab-btn ${activeTab === 'catalog' ? 'active' : ''}`}>
             👟 Каталог взуття
           </button>
         </div>
@@ -240,6 +333,7 @@ export default function MonthView() {
         <>
           {activeTab === 'summary' && (
             <SummaryView
+              key={`summary-${monthKey}`}
               monthKey={monthKey}
               milaRows={milaRows}
               valeraRows={valeraRows}
@@ -252,6 +346,7 @@ export default function MonthView() {
 
           {activeTab === 'mila' && (
             <ManufacturerLedger
+              key={`mila-${monthKey}`}
               manufacturerName="Міла"
               paymentMode="prepaid"
               selectedMonth={selectedMonth}
@@ -260,6 +355,7 @@ export default function MonthView() {
               setRows={setMilaRows}
               depositsList={milaDepositsList}
               setDepositsList={setMilaDepositsList}
+              carriedAdvanceFromPrev={carriedAdvanceFromPrev}
               initialDebt={milaInitialDebt}
               setInitialDebt={setMilaInitialDebt}
               exchangeRate={milaRate}
@@ -270,6 +366,7 @@ export default function MonthView() {
 
           {activeTab === 'valera' && (
             <ManufacturerLedger
+              key={`valera-${monthKey}`}
               manufacturerName="Валерій"
               paymentMode="postpaid"
               selectedMonth={selectedMonth}

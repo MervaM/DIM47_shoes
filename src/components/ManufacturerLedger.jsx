@@ -235,48 +235,26 @@ export default function ManufacturerLedger(props) {
     (shoe) => (shoe.manufacturer || 'Міла') === manufacturerName
   );
 
-  // Аванси з попередніх місяців
-  const prevDeposits = depositsList.filter((d) => {
-    const depMonth = getMonthFromRow(d, activeMonth, resolvedYear);
-    return depMonth < activeMonth;
-  });
+  // Перенесений залишок авансу з попередніх місяців
+  const carriedAdvanceBalance = Number(carriedAdvanceFromPrev) || 0;
 
-  let localPrevDepositsSum = 0;
-  prevDeposits.forEach((d) => {
-    localPrevDepositsSum += Number(d.amount) || 0;
-  });
-
-  let localPrevPaidFromAdvanceUAH = 0;
-
-  rows.forEach((row) => {
-    if (row.type !== 'item' || row.isEditing) return;
-    const qty = Number(row.quantity) || 0;
-    const costUSD = Number(row.customCostUSD) || 0;
-    const patternUAH = Number(row.patternCostUAH) || 0;
-    const rRate = Number(row.rowRate) || 0;
-    const rowFullUAH = qty * costUSD * rRate + patternUAH;
-
-    if (row.isPaid) {
-      const paidM = getPaidMonthFromRow(row, resolvedYear);
-      if (paidM < activeMonth && row.paySource !== 'separate') {
-        localPrevPaidFromAdvanceUAH += rowFullUAH;
-      }
-    }
-  });
-
-  const hasLocalPrevData = localPrevDepositsSum > 0 || localPrevPaidFromAdvanceUAH > 0;
-  const carriedAdvanceBalance = hasLocalPrevData
-    ? localPrevDepositsSum - localPrevPaidFromAdvanceUAH
-    : Number(carriedAdvanceFromPrev) || 0;
-
-  // Показуємо рядки поточного місяця, а також неоплачені пари з попередніх місяців (перетягнуті в поточний місяць)
-  const monthRows = rows.filter((r) => {
+  // 1. Всі рядки, які вже належать цьому місяцю (включно зі старими записами без поля month)
+  const currentMonthOwnRows = rows.filter((r) => {
     if (r.isEditing) return true;
+    if (!r.month && !r.isoDate) return true;
     const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-    if (rowMonth === activeMonth) return true;
-    if (row.type === 'item' && !r.isPaid && rowMonth < activeMonth) return true;
-    return false;
+    return rowMonth === activeMonth;
   });
+
+  // 2. Неоплачені пари з попередніх місяців (перетягуються в поточний, поки не оплачені)
+  const carriedUnpaidRows = rows.filter((r) => {
+    if (r.type !== 'item' || r.isPaid || r.isEditing) return false;
+    if (!r.month && !r.isoDate) return false;
+    const rowMonth = getMonthFromRow(r, activeMonth, resolvedYear);
+    return rowMonth < activeMonth;
+  });
+
+  const monthRows = [...carriedUnpaidRows, ...currentMonthOwnRows];
 
   // Оплачені рядки, дата оплати яких у поточному місяці
   const monthPaidRows = rows.filter((r) => {
@@ -290,7 +268,7 @@ export default function ManufacturerLedger(props) {
   });
 
   const handleAddRow = () => {
-    const nextSeq = getNextSequentialDate(monthRows, activeMonth, resolvedYear);
+    const nextSeq = getNextSequentialDate(currentMonthOwnRows, activeMonth, resolvedYear);
     setRows([
       ...rows,
       {
@@ -419,7 +397,6 @@ export default function ManufacturerLedger(props) {
     setRows(rows.filter((row) => row.id !== id));
   };
 
-  // Неоплачені та вибрані пари у поточному вікні місяця (включно з перенесеними неоплаченими)
   let unpaidPairs = 0;
   let unpaidUSD = 0;
   let unpaidUAH = 0;
@@ -457,7 +434,6 @@ export default function ManufacturerLedger(props) {
     }
   });
 
-  // Оплати за датою оплати у поточному місяці
   let paidPairs = 0;
   let paidTotalUAH = 0;
   let paidFromAdvanceUAH = 0;
@@ -519,11 +495,7 @@ export default function ManufacturerLedger(props) {
 
     setRows((prevRows) => {
       const targetIds = prevRows
-        .filter((r) => {
-          const rMonth = getMonthFromRow(r, activeMonth, resolvedYear);
-          const isInCurrentWindow = rMonth === activeMonth || (!r.isPaid && rMonth < activeMonth);
-          return isInCurrentWindow && r.type === 'item' && !r.isPaid && r.isSelectedForPay;
-        })
+        .filter((r) => r.type === 'item' && !r.isPaid && r.isSelectedForPay)
         .map((r) => r.id);
 
       const firstId = targetIds[0];
